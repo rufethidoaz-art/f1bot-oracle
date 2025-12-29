@@ -20,10 +20,5 @@
             "src": "/webhook",
             "dest": "app.py"
         }
-    ],
-    "functions": {
-        "app.py": {
-            "maxDuration": 30
-        }
-    }
+    ]
 }
