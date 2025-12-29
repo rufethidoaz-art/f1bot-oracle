@@ -1,0 +1,29 @@
+{
+    "version": 2,
+    "name": "f1-bot-vercel",
+    "builds": [
+        {
+            "src": "app.py",
+            "use": "@vercel/python"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/",
+            "dest": "app.py"
+        },
+        {
+            "src": "/health",
+            "dest": "app.py"
+        },
+        {
+            "src": "/webhook",
+            "dest": "app.py"
+        }
+    ],
+    "functions": {
+        "app.py": {
+            "maxDuration": 30
+        }
+    }
+}

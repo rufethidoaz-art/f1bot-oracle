@@ -20,7 +20,6 @@ from f1_bot import (
     lastrace_cmd,
     nextrace_cmd,
     live_cmd,
-    weather_cmd,
     streams_cmd,
     addstream_cmd,
     removestream_cmd,
@@ -82,7 +81,6 @@ def setup_bot():
     application.add_handler(CommandHandler("lastrace", lastrace_cmd))
     application.add_handler(CommandHandler("nextrace", nextrace_cmd))
     application.add_handler(CommandHandler("live", live_cmd))
-    application.add_handler(CommandHandler("weather", weather_cmd))
     application.add_handler(CommandHandler("streams", streams_cmd))
     application.add_handler(CommandHandler("addstream", addstream_cmd))
     application.add_handler(CommandHandler("removestream", removestream_cmd))

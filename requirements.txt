@@ -1,0 +1,13 @@
+# F1 Telegram Bot - Vercel Requirements
+# Optimized for Vercel serverless deployment
+
+# Core dependencies
+python-telegram-bot==20.7
+flask==3.0.3
+requests==2.32.3
+
+# Optional but recommended for better performance
+python-dotenv==1.0.1
+
+# Note: Playwright is not included as live timing is disabled in Vercel version
+# to reduce deployment complexity and cold start times

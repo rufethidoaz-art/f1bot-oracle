@@ -1,0 +1,8 @@
+# F1 Bot Streams Configuration
+# Format: Stream Name | Stream URL
+# Lines starting with # are comments
+
+# Example streams (replace with actual working streams)
+F1 Live Stream | https://example.com/f1-live.m3u8
+Official F1 Stream | https://example.com/official-f1.m3u8
+Race Highlights | https://example.com/f1-highlights.m3u8
