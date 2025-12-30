@@ -156,6 +156,12 @@ F1-bot-vercel/
    - Check that deployment is successful
    - Ensure HTTPS is enabled
 
+5. **Build Warnings:**
+   - If you see: "Due to `builds` existing in your configuration file, the Build and Development Settings defined in your Project Settings will not apply"
+   - This is expected behavior - the vercel.json configuration takes precedence
+   - The warning can be safely ignored as our configuration is optimized for the F1 bot
+   - To eliminate the warning, ensure your vercel.json has proper function configuration (already configured)
+
 ### Cost Optimization
 
 **Free Tier Usage:**

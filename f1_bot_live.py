@@ -760,6 +760,84 @@ def get_last_session_results():
         return TRANSLATIONS["error_fetching_session"].format(str(e))
 
 
+def get_f1_season_calendar():
+    """Fetch and display the current F1 season's race schedule"""
+    try:
+        logger.info("Fetching F1 season calendar")
+        now = datetime.now(ZoneInfo("UTC"))
+        season = now.year if now.month > 3 else now.year - 1
+
+        # Try multiple APIs
+        apis = [
+            f"https://api.jolpi.ca/ergast/f1/{season}.json",
+        ]
+
+        data = None
+        for api_url in apis:
+            try:
+                response = requests.get(api_url, timeout=30)
+                if response.status_code == 200:
+                    data = response.json()
+                    break
+            except Exception as e:
+                logger.error(f"Error fetching calendar from {api_url}: {e}")
+                continue
+
+        if not data:
+            return TRANSLATIONS["api_unavailable"]
+
+        try:
+            races = data.get("MRData", {}).get("RaceTable", {}).get("Races", [])
+            if not races:
+                return TRANSLATIONS["no_race_schedule"]
+        except Exception as e:
+            logger.error(f"Error parsing calendar data: {e}")
+            return TRANSLATIONS["invalid_data"]
+
+        message = f"🏎️ *{season} F1 Mövsüm Cədvəli*\n\n"
+
+        for race in races:
+            try:
+                race_name = race.get("raceName", "Grand Prix")
+                circuit = race.get("Circuit", {})
+                location = circuit.get("Location", {})
+                locality = location.get("locality", "")
+                country = location.get("country", "")
+                race_date = race.get("date")
+                race_time = race.get("time", "TBA")
+
+                flag = get_country_flag(country)
+
+                # Convert to Baku time
+                baku_time = to_baku(race_date, race_time)
+
+                # Determine race status
+                race_dt_str = f"{race_date}T{race_time.replace('Z', '')}"
+                race_dt = datetime.fromisoformat(race_dt_str)
+                if race_dt.tzinfo is None:
+                    race_dt = race_dt.replace(tzinfo=ZoneInfo("UTC"))
+
+                if race_dt < now:
+                    status = "🏁 Tamamlandı"
+                elif race_dt > (now + timedelta(days=7)):
+                    status = "📅 Gələcək"
+                else:
+                    status = "🔴 Cari"
+
+                message += f"{flag} *{race_name}*\n"
+                message += f"📍 {locality}, {country}\n"
+                message += f"📅 {baku_time} ({status})\n\n"
+
+            except Exception as e:
+                logger.error(f"Error processing race data: {e}")
+                continue
+
+        return message
+    except Exception as e:
+        logger.error(f"Error in get_f1_season_calendar: {e}")
+        return TRANSLATIONS["error_fetching_race"].format(str(e))
+
+
 def get_next_race():
     """Get next race schedule using Jolpica API"""
     try:
@@ -1002,6 +1080,29 @@ def get_streams(user_id=None):
         return f"❌ Error: {str(e)}", None
 
 
+# Global cache for calendar data
+CALENDAR_CACHE = {
+    "data": None,
+    "timestamp": None,
+    "expiry": 3600,  # 1 hour cache expiry
+}
+
+
+def get_cached_calendar():
+    """Retrieve cached calendar data if available and not expired"""
+    if CALENDAR_CACHE["data"] and CALENDAR_CACHE["timestamp"]:
+        now = datetime.now(ZoneInfo("UTC")).timestamp()
+        if now - CALENDAR_CACHE["timestamp"] < CALENDAR_CACHE["expiry"]:
+            return CALENDAR_CACHE["data"]
+    return None
+
+
+def set_cached_calendar(data):
+    """Cache calendar data with current timestamp"""
+    CALENDAR_CACHE["data"] = data
+    CALENDAR_CACHE["timestamp"] = datetime.now(ZoneInfo("UTC")).timestamp()
+
+
 # ==================== TELEGRAM BOT HANDLERS ====================
 
 
@@ -1030,6 +1131,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton(TRANSLATIONS["live_timing"], callback_data="live"),
+            InlineKeyboardButton("📅 Mövsüm Cədvəli", callback_data="calendar"),
+        ],
+        [
             InlineKeyboardButton(TRANSLATIONS["streams"], callback_data="streams"),
         ],
     ]
@@ -1070,6 +1174,9 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton(TRANSLATIONS["live_timing"], callback_data="live"),
+            InlineKeyboardButton("📅 Mövsüm Cədvəli", callback_data="calendar"),
+        ],
+        [
             InlineKeyboardButton(
                 TRANSLATIONS["help_commands_btn"], callback_data="help"
             ),
@@ -1087,9 +1194,11 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button clicks"""
     query = update.callback_query
-    if query is not None:
-        await query.answer()
-        logger.info(f"User {query.from_user.id} clicked button: {query.data}")
+    if query is None:
+        return
+    
+    await query.answer()
+    logger.info(f"User {query.from_user.id} clicked button: {query.data}")
 
     try:
         if query.data == "standings":
@@ -1100,6 +1209,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = get_last_session_results()
         elif query.data == "nextrace":
             message = get_next_race()
+        elif query.data == "calendar":
+            # Fetch and display the F1 season calendar
+            cached_data = get_cached_calendar()
+            if cached_data:
+                message = cached_data
+            else:
+                message = get_f1_season_calendar()
+                set_cached_calendar(message)
         elif query.data == "live":
             # Check if there's an active F1 session before starting live updates
             if not check_active_f1_session():
@@ -1132,7 +1249,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = TRANSLATIONS["error_occurred"].format(str(e))
 
     # Send result
-    if query and isinstance(query.message, Message):
+    if isinstance(query.message, Message):
         await query.message.reply_text(message, parse_mode="Markdown")
 
 
