@@ -1819,14 +1819,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query is None:
         return
 
-    await query.answer("Processing your request...")
+    await query.answer()
     logger.info(f"User {query.from_user.id} clicked button: {query.data}")
-
-    # Show immediate loading feedback
-    try:
-        await query.edit_message_text("⏳ Processing your request...", parse_mode="Markdown")
-    except Exception as e:
-        logger.warning(f"Could not show loading message: {e}")
 
     try:
         if query.data == "standings":
