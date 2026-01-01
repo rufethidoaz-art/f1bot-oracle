@@ -1819,9 +1819,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query is None:
         return
 
-    await query.answer()
     logger.info(f"User {query.from_user.id} clicked button: {query.data}")
 
+    # Always acknowledge the callback query to prevent double-tapping
+    try:
+        await query.answer()
+    except Exception as e:
+        logger.error(f"Failed to answer callback query: {e}")
+        # Continue processing even if answer fails
+
+    # Process the button click
     try:
         if query.data == "standings":
             message = get_current_standings()

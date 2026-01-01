@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 import asyncio
+import threading
 from flask import Flask, request, jsonify
 from telegram import Update, Bot, Message
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -33,6 +34,103 @@ app = Flask(__name__)
 
 BOT_APP = None
 WEBHOOK_SET = False  # CRITICAL: Prevents repeated webhook attempts
+
+# Event loop management for persistent async processing
+UPDATE_LOOP = None
+UPDATE_LOOP_THREAD = None
+UPDATE_QUEUE = asyncio.Queue()
+
+def start_update_loop():
+    """Start a persistent event loop in a background thread for processing updates"""
+    global UPDATE_LOOP, UPDATE_LOOP_THREAD
+
+    if UPDATE_LOOP_THREAD is not None and UPDATE_LOOP_THREAD.is_alive():
+        logger.info("Update loop thread already running")
+        return
+
+    def run_loop():
+        global UPDATE_LOOP
+        UPDATE_LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(UPDATE_LOOP)
+        logger.info("Started persistent update event loop")
+
+        try:
+            UPDATE_LOOP.run_until_complete(process_update_queue())
+        except Exception as e:
+            logger.error(f"Error in update loop: {e}")
+        finally:
+            UPDATE_LOOP.close()
+            logger.info("Update event loop closed")
+
+    UPDATE_LOOP_THREAD = threading.Thread(target=run_loop, daemon=True)
+    UPDATE_LOOP_THREAD.start()
+    logger.info("Update loop thread started")
+
+async def process_update_queue():
+    """Process updates from the queue in the persistent event loop"""
+    while True:
+        try:
+            # Wait for an update to process
+            update_data = await UPDATE_QUEUE.get()
+            bot_app = update_data['bot_app']
+            update = update_data['update']
+            update_id = update_data['update_id']
+
+            # Process the update
+            await bot_app.process_update(update)
+            logger.info(f"✅ Update {update_id} processed successfully")
+
+        except Exception as e:
+            logger.error(f"❌ Error processing update from queue: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+        finally:
+            UPDATE_QUEUE.task_done()
+
+def submit_update_to_loop(bot_app, update, update_id):
+    """Submit an update to be processed by the persistent event loop"""
+    global UPDATE_LOOP
+
+    # Ensure the update loop is running
+    if UPDATE_LOOP is None or UPDATE_LOOP_THREAD is None or (UPDATE_LOOP_THREAD is not None and not UPDATE_LOOP_THREAD.is_alive()):
+        logger.info("Starting update loop...")
+        start_update_loop()
+        # Give the loop more time to start and be ready
+        import time
+        time.sleep(0.5)  # Increased from 0.1 to 0.5 seconds
+
+    # Try to submit to the persistent loop
+    if UPDATE_LOOP is not None and UPDATE_LOOP_THREAD is not None and UPDATE_LOOP_THREAD.is_alive():
+        try:
+            # Submit the update to the queue
+            future = asyncio.run_coroutine_threadsafe(
+                UPDATE_QUEUE.put({
+                    'bot_app': bot_app,
+                    'update': update,
+                    'update_id': update_id
+                }),
+                UPDATE_LOOP
+            )
+            # Wait for submission confirmation
+            future.result(timeout=2.0)  # Increased timeout
+            logger.info(f"📤 Update {update_id} submitted to persistent loop")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to submit update {update_id} to loop: {e}")
+
+    # Fallback: Process directly if loop submission fails
+    logger.warning(f"⚠️ Update loop not available, falling back to direct processing for {update_id}")
+    try:
+        # Create a new event loop for this request to avoid conflicts
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process_update_async(bot_app, update, update_id))
+        loop.close()
+        logger.info(f"✅ Update {update_id} processed via direct fallback")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Direct processing failed for update {update_id}: {e}")
+        return False
 
 # Get webhook URL from environment variable
 def get_webhook_url():
@@ -234,9 +332,17 @@ def webhook():
             logger.warning("Failed to create update object")
             return jsonify({"status": "ok"}), 200
 
-        # Process update synchronously using asyncio.run
-        asyncio.run(process_update_async(bot_app, update, update_id))
-        logger.info(f"✅ Update {update_id} processed successfully")
+        # Process update directly in a new event loop (serverless-friendly)
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(process_update_async(bot_app, update, update_id))
+            loop.close()
+            logger.info(f"✅ Update {update_id} processed successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to process update {update_id}: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
 
     except Exception as e:
         logger.error(f"❌ Error processing update {update_id}: {e}")
