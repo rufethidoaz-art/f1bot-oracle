@@ -77,9 +77,42 @@ def get_bot_token():
             logger.error(f"Error reading .env file: {e}")
     return None
 
+update_queue = Queue()
+
+def process_updates_background():
+    """Background thread to process updates asynchronously"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def process_item(item):
+        if item is None:
+            loop.stop()
+            return
+        bot_app, update, update_id = item
+        await process_update_async(bot_app, update, update_id)
+
+    def queue_watcher():
+        while True:
+            item = update_queue.get()
+            asyncio.run_coroutine_threadsafe(process_item(item), loop)
+
+    # Start the queue watcher
+    watcher_thread = Thread(target=queue_watcher, daemon=True)
+    watcher_thread.start()
+    loop.run_forever()
+
 # Run initialization in main process (not in Gunicorn workers)
+# Initialize the bot when the module is imported
+asyncio.run(initialize_bot_on_startup())
+
+# Start background processing thread when the module is imported
+background_thread = Thread(target=process_updates_background, daemon=True)
+background_thread.start()
+
 if __name__ == "__main__":
+    logger.info("Starting initialization...")
     asyncio.run(initialize_bot_on_startup())
+    logger.info("Initialization completed.")
 
 async def setup_bot():
     logger.info("=== BOT INITIALIZATION START ===")
@@ -153,8 +186,6 @@ async def set_webhook(webhook_url):
         logger.error(f"Full traceback: {traceback.format_exc()}")
         return False
 
-update_queue = Queue()
-
 async def process_update_async(bot_app, update, update_id):
     """Process update asynchronously"""
     try:
@@ -162,28 +193,6 @@ async def process_update_async(bot_app, update, update_id):
         logger.info(f"✅ Update {update_id} processed successfully")
     except Exception as e:
         logger.error(f"❌ Error processing update {update_id}: {e}")
-
-def process_updates_background():
-    """Background thread to process updates asynchronously"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def process_item(item):
-        if item is None:
-            loop.stop()
-            return
-        bot_app, update, update_id = item
-        await process_update_async(bot_app, update, update_id)
-
-    def queue_watcher():
-        while True:
-            item = update_queue.get()
-            asyncio.run_coroutine_threadsafe(process_item(item), loop)
-
-    # Start the queue watcher
-    watcher_thread = Thread(target=queue_watcher, daemon=True)
-    watcher_thread.start()
-    loop.run_forever()
 
 
 @app.route("/")
@@ -252,7 +261,7 @@ def debug():
         import_status["telegram"] = f"ERROR: {e}"
 
     webhook_info = {
-        "webhook_url": os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-rcgm3gyx.leapcell.dev/webhook")
+        "webhook_url": os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook")
     }
 
     return jsonify({
@@ -267,7 +276,7 @@ def debug():
 @app.route("/webhook-info")
 def webhook_info():
     """Endpoint to check webhook status"""
-    webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-rcgm3gyx.leapcell.dev/webhook")
+    webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook")
     return jsonify({
         "webhook_url": webhook_url,
         "bot_initialized": BOT_APP is not None,
@@ -280,26 +289,34 @@ def manual_set_webhook():
     if BOT_APP is None:
         return jsonify({"status": "error", "message": "Bot not initialized"}), 500
     try:
-        webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-rcgm3gyx.leapcell.dev/webhook")
+        webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook")
+        logger.info(f"Manually setting webhook to: {webhook_url}")
         success = asyncio.run(set_webhook(webhook_url))
         if success:
+            logger.info("✅ Webhook set successfully")
             return jsonify({"status": "success", "webhook_url": webhook_url}), 200
         else:
+            logger.warning("⚠️ Failed to set webhook")
             return jsonify({"status": "error", "message": "Failed to set webhook"}), 500
     except Exception as e:
         logger.error(f"❌ Failed to set webhook manually: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
     try:
+        logger.info("Initializing bot application...")
         success = asyncio.run(initialize_bot_app())
         if success:
             logger.info("✅ Bot initialized on startup - commands will work on first try!")
             # Set webhook URL in background
             webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook")
+            logger.info(f"Setting webhook to: {webhook_url}")
             # Start webhook setup in background
             webhook_thread = Thread(target=lambda: asyncio.run(set_webhook(webhook_url)), daemon=True)
             webhook_thread.start()
+            logger.info("Webhook setup started in background thread.")
         else:
             logger.warning("⚠️ Bot initialization failed - will try on first request")
     except Exception as e:
