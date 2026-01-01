@@ -71,25 +71,68 @@ def get_bot_token():
     return None
 
 def process_updates_background():
-    """Background thread to process updates asynchronously"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    async def process_item(item):
-        if item is None:
-            loop.stop()
-            return
-        bot_app, update, update_id = item
-        await process_update_async(bot_app, update, update_id)
-
-    def queue_watcher():
-        while True:
-            item = update_queue.get()
-            asyncio.run_coroutine_threadsafe(process_item(item), loop)
-
-    watcher_thread = Thread(target=queue_watcher, daemon=True)
-    watcher_thread.start()
-    loop.run_forever()
+    """Background thread to process updates asynchronously with event loop recovery"""
+    try:
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def process_item(item):
+            if item is None:
+                loop.stop()
+                return
+            bot_app, update, update_id = item
+            try:
+                await process_update_async(bot_app, update, update_id)
+                logger.info(f"✅ Update {update_id} processed successfully")
+            except Exception as e:
+                logger.error(f"❌ Error processing update {update_id}: {e}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        def queue_watcher():
+            while True:
+                item = update_queue.get()
+                try:
+                    # Run coroutine in the event loop
+                    future = asyncio.run_coroutine_threadsafe(process_item(item), loop)
+                    future.result()  # Wait for completion
+                except RuntimeError as e:
+                    if "Event loop is closed" in str(e):
+                        logger.warning("Event loop closed, creating new one")
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        # Re-run the failed item
+                        future = asyncio.run_coroutine_threadsafe(process_item(item), loop)
+                        future.result()
+                    else:
+                        raise
+                except Exception as e:
+                    logger.error(f"❌ Background processing failed: {e}")
+                    import traceback
+                    logger.error(f"Full traceback: {traceback.format_exc()}")
+        
+        watcher_thread = Thread(target=queue_watcher, daemon=True)
+        watcher_thread.start()
+        
+        # Run loop forever
+        try:
+            loop.run_forever()
+        except Exception as e:
+            logger.error(f"❌ Event loop crashed: {e}")
+            # Restart the background processor
+            import time
+            time.sleep(5)
+            process_updates_background()
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start background processor: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        # Restart after delay
+        import time
+        time.sleep(10)
+        process_updates_background()
 
 async def setup_bot():
     """Initialize the Telegram bot application"""
