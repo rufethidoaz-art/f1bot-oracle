@@ -56,18 +56,22 @@ def get_bot_token():
     return os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def setup_bot():
+    logger.info("=== BOT INITIALIZATION START ===")
     BOT_TOKEN = get_bot_token()
+    logger.info(f"Bot token retrieved: {'YES' if BOT_TOKEN else 'NO'}")
     if not BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN is not set!")
         return None
     logger.info("Setting up Telegram bot application...")
     try:
+        logger.info("Creating Application builder...")
         application = (
             Application.builder()
             .token(BOT_TOKEN)
             .concurrent_updates(True)
             .build()
         )
+        logger.info("Application created, adding handlers...")
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("menu", show_menu))
         application.add_handler(CommandHandler("standings", standings_cmd))
@@ -77,9 +81,12 @@ async def setup_bot():
         application.add_handler(CommandHandler("live", live_cmd))
         application.add_handler(CallbackQueryHandler(button_handler))
         logger.info("✅ Bot setup successful")
+        logger.info("=== BOT INITIALIZATION COMPLETE ===")
         return application
     except Exception as e:
         logger.error(f"❌ Bot setup failed: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return None
 
 async def initialize_bot_app():
@@ -177,10 +184,25 @@ def webhook():
 @app.route("/debug")
 def debug():
     token = get_bot_token()
+    import_status = {}
+    try:
+        from f1_bot_live import start, get_current_standings
+        import_status["f1_bot_live"] = "OK"
+    except Exception as e:
+        import_status["f1_bot_live"] = f"ERROR: {e}"
+
+    try:
+        import telegram
+        import_status["telegram"] = f"OK (v{telegram.__version__})"
+    except Exception as e:
+        import_status["telegram"] = f"ERROR: {e}"
+
     return jsonify({
         "bot_token_set": bool(token),
         "bot_initialized": BOT_APP is not None,
         "version": "1.1.0",
+        "imports": import_status,
+        "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
     })
 
 if __name__ == "__main__":
