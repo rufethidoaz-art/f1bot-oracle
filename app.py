@@ -1,20 +1,18 @@
 """
-F1 Telegram Bot - Leapcell Version with Live Timing
-Main Flask application for Leapcell deployment with enhanced logging
-FINAL WORKING VERSION with thread-safe queue
+F1 Telegram Bot - FIXED VERSION
+Solves the double-call issue with proper webhook handling
 """
 
 import os
 import sys
 import logging
 import asyncio
-import threading
-import queue
+from queue import Queue
+from threading import Thread
 from flask import Flask, request, jsonify
-from telegram import Update
+from telegram import Update, Bot, Message
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-# Import bot functionality
 from f1_bot_live import (
     start,
     show_menu,
@@ -24,105 +22,24 @@ from f1_bot_live import (
     lastrace_cmd,
     nextrace_cmd,
     live_cmd,
-    streams_cmd,
-    addstream_cmd,
-    removestream_cmd,
-    streamhelp_cmd,
-    playstream_cmd,
 )
 
-# Configure enhanced logging for Leapcell
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ],
+    level=logging.WARNING,
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
-# Create Flask app
 app = Flask(__name__)
 
-# Global reference for bot application
 BOT_APP = None
 
-# Thread-safe queue for webhook updates
-update_queue = queue.Queue()
-
-
-def bot_worker():
-    """Background worker to process bot updates"""
-    global BOT_APP, update_queue
-
-    logger.info("Bot worker thread starting...")
-
-    # Create new event loop for this thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    try:
-        logger.info("Bot worker event loop created")
-
-        # Initialize bot if not already done
-        if BOT_APP is None:
-            logger.info("Bot worker initializing bot application...")
-            BOT_APP = setup_bot()
-            if BOT_APP:
-                logger.info("Bot worker setting up bot handlers...")
-                loop.run_until_complete(BOT_APP.initialize())
-                logger.info("Bot worker initialized successfully")
-            else:
-                logger.error("Failed to initialize bot in worker")
-                return
-        else:
-            logger.info("Bot worker using existing bot application")
-
-        # Process updates from queue
-        logger.info("Bot worker starting update processing loop...")
-        while True:
-            try:
-                logger.info("Bot worker waiting for updates...")
-                # Use regular queue.get() instead of asyncio
-                update = update_queue.get(timeout=1)
-                if update is None:  # Poison pill to stop worker
-                    logger.info("Bot worker received stop signal")
-                    break
-
-                logger.info(f"Bot worker processing update: {update.update_id}")
-                loop.run_until_complete(BOT_APP.process_update(update))
-                logger.info(
-                    f"Bot worker processed update {update.update_id} successfully"
-                )
-
-            except queue.Empty:
-                # Timeout is normal, just continue
-                continue
-            except Exception as e:
-                logger.error(f"Error in bot worker: {e}")
-                import traceback
-
-                logger.error(f"Worker error traceback: {traceback.format_exc()}")
-
-    except Exception as e:
-        logger.error(f"Bot worker failed with exception: {e}")
-        import traceback
-
-        logger.error(f"Worker startup error traceback: {traceback.format_exc()}")
-    finally:
-        logger.info("Bot worker shutting down...")
-        loop.close()
-        logger.info("Bot worker event loop closed")
-
-
-def setup_bot():
-    """Setup and return the Telegram bot application"""
+def get_bot_token():
     try:
         from dotenv import load_dotenv
-
         load_dotenv(override=False)
     except ImportError:
-        # Fallback: manually read .env file if python-dotenv is not installed
         if not os.getenv("TELEGRAM_BOT_TOKEN") and os.path.exists(".env"):
             try:
                 with open(".env", "r", encoding="utf-8") as f:
@@ -136,194 +53,147 @@ def setup_bot():
                                 os.environ[key] = value
             except Exception as e:
                 logger.error(f"Error reading .env file: {e}")
-                pass
+    return os.getenv("TELEGRAM_BOT_TOKEN")
 
-    # Get bot token from environment variable
-    BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
+async def setup_bot():
+    BOT_TOKEN = get_bot_token()
     if not BOT_TOKEN:
         logger.error("TELEGRAM_BOT_TOKEN is not set!")
-        logger.error("Get your token from @BotFather: https://t.me/BotFather")
+        return None
+    logger.info("Setting up Telegram bot application...")
+    try:
+        application = (
+            Application.builder()
+            .token(BOT_TOKEN)
+            .concurrent_updates(True)
+            .build()
+        )
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("menu", show_menu))
+        application.add_handler(CommandHandler("standings", standings_cmd))
+        application.add_handler(CommandHandler("constructors", constructors_cmd))
+        application.add_handler(CommandHandler("lastrace", lastrace_cmd))
+        application.add_handler(CommandHandler("nextrace", nextrace_cmd))
+        application.add_handler(CommandHandler("live", live_cmd))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        logger.info("✅ Bot setup successful")
+        return application
+    except Exception as e:
+        logger.error(f"❌ Bot setup failed: {e}")
         return None
 
-    logger.info("Setting up Telegram bot application...")
+async def initialize_bot_app():
+    global BOT_APP
+    try:
+        bot_app = await setup_bot()
+        if bot_app:
+            await bot_app.initialize()
+            BOT_APP = bot_app
+            logger.info("✅ Bot application initialized successfully")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize bot: {e}")
+        BOT_APP = None
+    return False
 
-    # Create application with proper configuration for v20.7
-    application = Application.builder().token(BOT_TOKEN).build()
+update_queue = Queue()
 
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("menu", show_menu))
-    application.add_handler(CommandHandler("standings", standings_cmd))
-    application.add_handler(CommandHandler("constructors", constructors_cmd))
-    application.add_handler(CommandHandler("lastrace", lastrace_cmd))
-    application.add_handler(CommandHandler("nextrace", nextrace_cmd))
-    application.add_handler(CommandHandler("live", live_cmd))
-    application.add_handler(CommandHandler("streams", streams_cmd))
-    application.add_handler(CommandHandler("addstream", addstream_cmd))
-    application.add_handler(CommandHandler("removestream", removestream_cmd))
-    application.add_handler(CommandHandler("playstream", playstream_cmd))
-    application.add_handler(CommandHandler("streamhelp", streamhelp_cmd))
-    application.add_handler(CallbackQueryHandler(button_handler))
+async def process_update_async(bot_app, update, update_id):
+    """Process update asynchronously"""
+    try:
+        await bot_app.process_update(update)
+        logger.info(f"✅ Update {update_id} processed successfully")
+    except Exception as e:
+        logger.error(f"❌ Error processing update {update_id}: {e}")
 
-    logger.info("Bot handlers configured successfully")
-    return application
+def process_updates_background():
+    """Background thread to process updates asynchronously"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    async def process_item(item):
+        if item is None:
+            loop.stop()
+            return
+        bot_app, update, update_id = item
+        await process_update_async(bot_app, update, update_id)
+
+    def queue_watcher():
+        while True:
+            item = update_queue.get()
+            asyncio.run_coroutine_threadsafe(process_item(item), loop)
+
+    # Start the queue watcher
+    watcher_thread = Thread(target=queue_watcher, daemon=True)
+    watcher_thread.start()
+    loop.run_forever()
 
 
 @app.route("/")
 def home():
-    """Health check endpoint for Leapcell"""
-    logger.info("Health check requested")
     return {
         "status": "F1 Telegram Bot is running!",
-        "version": "1.0.2",
-        "timestamp": "2025-12-29T13:16:00Z",
+        "version": "1.1.0",
+        "fix": "double_call_issue_solved",
         "deployment": "Leapcell",
-        "live_timing": "enabled",
-        "logging": "enhanced",
-        "async_fix": "worker_thread_queue",
     }
-
 
 @app.route("/health")
 def health_check():
-    """Health check endpoint"""
-    logger.info("Health check endpoint called")
     return {
         "status": "healthy",
-        "service": "F1 Telegram Bot",
-        "deployment": "Leapcell",
-        "live_timing": "enabled",
+        "initialized": BOT_APP is not None,
     }
-
-
-@app.route("/test-webhook", methods=["GET", "POST"])
-def test_webhook():
-    """Test webhook endpoint for debugging"""
-    logger.info(f"Test webhook called with method: {request.method}")
-    
-    if request.method == "GET":
-        return jsonify({
-            "status": "test_webhook_working",
-            "message": "Webhook endpoint is accessible",
-            "bot_token_set": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
-            "deployment": "Leapcell"
-        })
-    
-    elif request.method == "POST":
-        try:
-            json_data = request.get_json(force=True)
-            logger.info(f"Test webhook received data: {json_data}")
-            return jsonify({
-                "status": "test_webhook_received",
-                "message": "Webhook test successful",
-                "received_data": json_data
-            })
-        except Exception as e:
-            logger.error(f"Error in test webhook: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 400
-    
-    return jsonify({"status": "unknown_method", "message": "Method not supported"}), 405
-
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    """Telegram webhook endpoint with enhanced logging"""
-    global BOT_APP, update_queue
-
-    logger.info(f"Webhook called with method: {request.method}")
-    logger.info(f"Request headers: {dict(request.headers)}")
-
+    global BOT_APP
+    json_data = request.get_json(force=True, silent=True)
+    if not json_data:
+        logger.warning("Invalid JSON received")
+        return jsonify({"status": "ok"}), 200
+    update_id = json_data.get("update_id", "unknown")
+    logger.info(f"📥 Update {update_id} received")
     try:
-        logger.info("Processing webhook request...")
-        # Parse JSON data safely
-        json_data = request.get_json(force=True)
-        if not json_data:
-            return jsonify({"error": "Invalid JSON data"}), 400
-
-        logger.info(f"Parsed JSON data: {json_data}")
-        logger.info(f"JSON data type: {type(json_data)}")
-
-        # Initialize bot on every request (serverless environment)
-        logger.info("Initializing bot application for this request...")
-        BOT_APP = setup_bot()
         if BOT_APP is None:
-            logger.error("Failed to initialize bot application")
-            return jsonify({"error": "Bot initialization failed"}), 500
-
-        # Create update object
-        update = Update.de_json(json_data, BOT_APP.bot)
-        user_id = "unknown"
-        if update and hasattr(update, 'effective_user') and update.effective_user:
-            user_id = str(update.effective_user.id)
-        logger.info(f"Received update from user: {user_id}")
-        logger.info(f"Update type: {type(update)}")
-
-        # Process the update directly for LEAPCELL
-        try:
-            logger.info("Processing update directly...")
-
-            # Use asyncio.run() for cleaner event loop management
-            async def process_update_async():
-                try:
-                    # Initialize the bot application for this request
-                    logger.info("Initializing bot application...")
-                    await BOT_APP.initialize()
-                    logger.info("Bot application initialized")
-
-                    # Process the update directly
-                    await BOT_APP.process_update(update)
-                    update_id = getattr(update, 'update_id', 'unknown') if update else 'unknown'
-                    logger.info(f"Successfully processed update {update_id}")
-                    return {"status": "ok", "message": "Update processed successfully"}
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
-                    return {"status": "error", "message": str(e)}
-
-            # Run the async function
-            result = asyncio.run(process_update_async())
-            if result["status"] == "error":
-                return jsonify(result), 500
-            return jsonify(result), 200
-
-        except Exception as e:
-            logger.error(f"Error in direct update processing: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
+            logger.info("Bot not initialized, setting up...")
+            success = asyncio.run(initialize_bot_app())
+            if not success:
+                return jsonify({"status": "ok", "message": "Bot init failed"}), 200
+        bot_app = BOT_APP
+        if bot_app is None or not hasattr(bot_app, "bot") or bot_app.bot is None:
+            return jsonify({"status": "ok"}), 200
+        bot = bot_app.bot
+        update = Update.de_json(json_data, bot)
+        if update is None:
+            logger.warning("Failed to create update object")
+            return jsonify({"status": "ok"}), 200
+        update_queue.put((bot_app, update, update_id))
+        logger.info(f"📤 Update {update_id} queued for processing")
     except Exception as e:
-        logger.error(f"Error processing webhook: {e}")
-        logger.error(f"Request data: {request.get_data()}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"❌ Error processing update {update_id}: {e}")
+    return jsonify({"status": "ok"}), 200
 
-
-@app.route("/logs")
-def get_logs():
-    """Endpoint to retrieve bot logs (for debugging)"""
-    try:
-        if os.path.exists("bot.log"):
-            with open("bot.log", "r", encoding="utf-8") as f:
-                logs = f.read()
-            return jsonify({"logs": logs[-2000:]}), 200  # Return last 2000 chars
-        else:
-            return jsonify({"logs": "No logs available"}), 200
-    except Exception as e:
-        logger.error(f"Error reading logs: {e}")
-        return jsonify({"error": str(e)}), 500
-
+@app.route("/debug")
+def debug():
+    token = get_bot_token()
+    return jsonify({
+        "bot_token_set": bool(token),
+        "bot_initialized": BOT_APP is not None,
+        "version": "1.1.0",
+    })
 
 if __name__ == "__main__":
-    # Local development mode
-    logger.info("Starting F1 Bot in local mode...")
-
-    # Start bot worker thread (non-daemon so it stays alive)
-    worker_thread = threading.Thread(target=bot_worker, daemon=False)
-    worker_thread.start()
-    logger.info(f"Bot worker thread started (Thread ID: {worker_thread.ident})")
-
-    # Initialize bot in main thread for webhook creation
-    BOT_APP = setup_bot()
-    if BOT_APP:
-        logger.info("Bot started successfully in local mode")
-        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-    else:
-        logger.error("Failed to start bot")
-        sys.exit(1)
+    try:
+        success = asyncio.run(initialize_bot_app())
+        if success:
+            logger.info("✅ Bot initialized on startup - commands will work on first try!")
+        else:
+            logger.warning("⚠️ Bot initialization failed - will try on first request")
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+    # Start background processing thread
+    background_thread = Thread(target=process_updates_background, daemon=True)
+    background_thread.start()
+    logger.info("🌐 Flask server starting...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=False, threaded=True)

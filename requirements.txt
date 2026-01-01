@@ -1,19 +1,36 @@
-# F1 Telegram Bot - Leapcell Requirements
-# Optimized for Leapcell serverless deployment
+# F1 Telegram Bot - Playwright Version for Leapcell
+# Optimized for Leapcell serverless deployment with live timing
 
-# Core dependencies
+# Core Bot Framework
 python-telegram-bot==20.7
-flask==3.0.3
-requests==2.32.3
 
-# WSGI server for Leapcell production deployment
+# Web Framework
+flask==3.0.3
 gunicorn==21.2.0
 
-# Optional but recommended for better performance
+# HTTP Requests
+requests==2.32.3
+urllib3==2.0.7
+
+# Environment Management
 python-dotenv==1.0.1
 
 # Flask async support for webhook processing
 flask[async]==3.0.3
 
-# Note: Playwright is not included as live timing is disabled in Leapcell version
-# to reduce deployment complexity and cold start times
+# Web Scraping (CRITICAL FOR LIVE TIMING)
+playwright==1.40.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# Date/Time Handling
+python-dateutil==2.8.2
+
+# JSON Processing
+orjson==3.9.10
+
+# Async Support
+asyncio-mqtt==0.16.1
+
+# Logging
+structlog==23.2.0
