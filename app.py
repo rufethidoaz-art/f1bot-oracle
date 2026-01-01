@@ -295,9 +295,11 @@ if __name__ == "__main__":
         success = asyncio.run(initialize_bot_app())
         if success:
             logger.info("✅ Bot initialized on startup - commands will work on first try!")
-            # Set webhook URL
-            webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-rcgm3gyx.leapcell.dev/webhook")
-            asyncio.run(set_webhook(webhook_url))
+            # Set webhook URL in background
+            webhook_url = os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook")
+            # Start webhook setup in background
+            webhook_thread = Thread(target=lambda: asyncio.run(set_webhook(webhook_url)), daemon=True)
+            webhook_thread.start()
         else:
             logger.warning("⚠️ Bot initialization failed - will try on first request")
     except Exception as e:
