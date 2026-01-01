@@ -96,7 +96,9 @@ async def setup_bot():
     BOT_TOKEN = get_bot_token()
     logger.info(f"Bot token retrieved: {'YES' if BOT_TOKEN else 'NO'}")
     if not BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN is not set!")
+        logger.error("❌ TELEGRAM_BOT_TOKEN is not set!")
+        logger.error("Please set your Telegram bot token in the .env file or environment variables")
+        logger.error("Get your bot token from @BotFather in Telegram")
         return None
     
     logger.info("Setting up Telegram bot application...")
@@ -205,8 +207,8 @@ def webhook():
             logger.info("Bot not initialized, setting up...")
             success = asyncio.run(initialize_bot_app())
             if not success:
-                logger.error("Failed to initialize bot")
-                return jsonify({"status": "ok", "message": "Bot init failed"}), 200
+                logger.error("❌ Failed to initialize bot")
+                return jsonify({"status": "error", "message": "Bot initialization failed - check logs for details"}), 500
         
         bot_app = BOT_APP
         if bot_app is None or not hasattr(bot_app, "bot") or bot_app.bot is None:
@@ -330,13 +332,27 @@ def main():
             logger.warning("⚠️ Bot initialization failed on startup - will try on first request")
     except Exception as e:
         logger.error(f"❌ Startup initialization error: {e}")
-    
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+     
     # Start background processing thread
-    background_thread = Thread(target=process_updates_background, daemon=True)
-    background_thread.start()
-    logger.info("📋 Background processing thread started")
+    try:
+        background_thread = Thread(target=process_updates_background, daemon=True)
+        background_thread.start()
+        logger.info("📋 Background processing thread started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start background thread: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+
+# Initialize bot when Flask app starts (for Gunicorn compatibility)
+def init_app():
+    with app.app_context():
+        main()
+
+# Call init_app when this module is imported
+init_app()
 
 if __name__ == "__main__":
-    main()
     logger.info("🌐 Flask server starting...")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=False, threaded=True)
