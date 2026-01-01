@@ -12,7 +12,8 @@ env:
   TELEGRAM_BOT_TOKEN: your_bot_token_here
   PORT: 8080
   PLAYWRIGHT_BROWSERS_PATH: /tmp/playwright
-  WEBHOOK_URL: https://f1bot2026update-rufethidoaz6750-n6xifi7cpxr9au20jv.leapcell-async.dev/webhook
+  WEBHOOK_URL: https://f1bot2026update-rufethidoaz6750-rcgm3gyx.leapcell.dev
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 0
 
 # Health check configuration
 health_check:
@@ -25,11 +26,6 @@ health_check:
 resources:
   cpu: 1.0
   memory: 1024
-
-# Environment variables for Playwright optimization
-env:
-  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 0
-  PLAYWRIGHT_BROWSERS_PATH: /tmp/playwright
 
 # Alternative configuration using Dockerfile:
 # runtime: docker
