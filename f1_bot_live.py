@@ -1909,8 +1909,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Error refreshing live data: {e}")
                 message = f"❌ Xəta: {str(e)}\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
         elif query.data == "live":
-            # Start live timing with Playwright scraper
-            message = "🔴 Canlı vaxt yüklənir...\n\n⏳ Formula-timer.com saytından məlumatlar alınır..."
+            # Check if there's an active F1 session first
+            if not check_active_f1_session():
+                message = "❌ *Hal-hazırda aktiv F1 sessiyası yoxdur*\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.\n\n📊 Canlı vaxt göstərir:\n• Sürücülərin mövqeləri\n• Interval vaxtları\n• Ən yaxşı dövrə vaxtları\n• Təkər məlumatları\n• Hər çağırışda yenilənən məlumatlar\n\nAlternativlər:\n• /nextrace - Gələn yarış və hava proqnozu\n• /lastrace - Son sessiya nəticələri"
+            else:
+                # Start live timing with Playwright scraper
+                message = "🔴 Canlı vaxt yüklənir...\n\n⏳ Formula-timer.com saytından məlumatlar alınır..."
         elif query.data == "help":
             message = """ℹ️ *F1 Bot Köməyi*
 
@@ -2048,6 +2052,14 @@ async def live_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.info("User requested live timing (unknown user)")
     if isinstance(update.message, Message):
+        # First check if there's an active F1 session
+        if not check_active_f1_session():
+            await update.message.reply_text(
+                "❌ *Hal-hazırda aktiv F1 sessiyası yoxdur*\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.\n\n📊 Canlı vaxt göstərir:\n• Sürücülərin mövqeləri\n• Interval vaxtları\n• Ən yaxşı dövrə vaxtları\n• Təkər məlumatları\n• Hər çağırışda yenilənən məlumatlar\n\nAlternativlər:\n• /nextrace - Gələn yarış və hava proqnozu\n• /lastrace - Son sessiya nəticələri",
+                parse_mode="Markdown"
+            )
+            return
+
         loading_msg = await update.message.reply_text(
             "🔴 Canlı vaxt məlumatları yüklənir...\n\n⏳ Formula-timer.com saytından məlumatlar alınır..."
         )
