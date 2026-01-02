@@ -58,23 +58,24 @@ from telegram.request import HTTPXRequest
 
 # Configure the Telegram bot to use the custom HTTPX client
 class CustomHTTPXRequest(HTTPXRequest):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, connection_pool_size=100, read_timeout=30.0, write_timeout=30.0, connect_timeout=30.0, pool_timeout=30.0):
+        # Call parent init with all parameters to ensure proper initialization
+        super().__init__(
+            connection_pool_size=connection_pool_size,
+            read_timeout=read_timeout,
+            write_timeout=write_timeout,
+            connect_timeout=connect_timeout,
+            pool_timeout=pool_timeout
+        )
         # Ensure client is properly initialized
-        if self._client is None:
+        if not hasattr(self, '_client') or self._client is None:
             self._client = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
-                timeout=httpx.Timeout(30.0, connect=10.0, read=30.0, write=30.0),
+                limits=httpx.Limits(max_connections=connection_pool_size, max_keepalive_connections=50),
+                timeout=httpx.Timeout(connect_timeout, read=read_timeout, write=write_timeout, pool=pool_timeout),
             )
 
-    async def do_request(self, url, method, request_data=None, files=None):
-        """Override do_request to ensure client is initialized"""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
-                timeout=httpx.Timeout(30.0, connect=10.0, read=30.0, write=30.0),
-            )
-        return await super().do_request(url, method, request_data, files)
+    # Removed do_request override - let parent handle it
+    # Client initialization is handled in __init__
 
     async def close(self):
         """Close the HTTP client"""
