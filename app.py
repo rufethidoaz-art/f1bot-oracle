@@ -190,8 +190,7 @@ async def setup_bot():
             read_timeout=30,
             write_timeout=30,
             connect_timeout=30,
-            pool_timeout=30,
-            limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
+            pool_timeout=30
         )
 
         application = (
