@@ -63,16 +63,13 @@ def start_update_loop():
 
     def run_loop():
         global UPDATE_LOOP
-        UPDATE_LOOP = asyncio.new_event_loop()
-        asyncio.set_event_loop(UPDATE_LOOP)
         logger.info("Started persistent update event loop")
 
         try:
-            UPDATE_LOOP.run_until_complete(process_update_queue())
+            asyncio.run(process_update_queue())
         except Exception as e:
             logger.error(f"Error in update loop: {e}")
         finally:
-            UPDATE_LOOP.close()
             logger.info("Update event loop closed")
 
     UPDATE_LOOP_THREAD = threading.Thread(target=run_loop, daemon=True)
@@ -134,11 +131,8 @@ def submit_update_to_loop(bot_app, update, update_id):
     # Fallback: Process directly if loop submission fails
     logger.warning(f"⚠️ Update loop not available, falling back to direct processing for {update_id}")
     try:
-        # Create a new event loop for this request to avoid conflicts
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(process_update_async(bot_app, update, update_id))
-        loop.close()
+        # Use asyncio.run to create a new event loop for this request to avoid conflicts
+        asyncio.run(process_update_async(bot_app, update, update_id))
         logger.info(f"✅ Update {update_id} processed via direct fallback")
         return True
     except Exception as e:
@@ -378,15 +372,9 @@ def webhook():
 def process_update_in_background(bot_app, update, update_id):
     """Process update in background thread with new event loop"""
     try:
-        # Use the main event loop to prevent conflicts
-        loop = get_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(process_update_isolated(bot_app, update, update_id))
-            logger.info(f"✅ Update {update_id} processed successfully in background")
-        finally:
-            # Do not close the loop to prevent conflicts
-            pass
+        # Use asyncio.run to create a new event loop for each task
+        asyncio.run(process_update_isolated(bot_app, update, update_id))
+        logger.info(f"✅ Update {update_id} processed successfully in background")
     except Exception as e:
         logger.error(f"❌ Error in background processing {update_id}: {e}")
         import traceback
@@ -403,14 +391,11 @@ async def process_update_isolated(bot_app, update, update_id):
         logger.error(f"Full traceback: {traceback.format_exc()}")
         # Handle specific errors
         error_str = str(e)
-        if "Event loop is closed" in error_str or "is bound to a different event loop" in error_str:
-            logger.warning("Event loop issue detected - restarting...")
-            # Restart the event loop
-            loop = get_event_loop()
-            asyncio.set_event_loop(loop)
-            # Retry processing
+        if "Event loop is closed" in error_str or "is bound to a different event loop" in error_str or "cannot enter context" in error_str:
+            logger.warning("Event loop or context issue detected - retrying with new event loop...")
+            # Use asyncio.run to create a new event loop and context
             try:
-                await bot_app.process_update(update)
+                asyncio.run(bot_app.process_update(update))
                 logger.info(f"✅ Update {update_id} processed successfully after loop restart")
             except Exception as retry_e:
                 logger.error(f"❌ Retry failed for update {update_id}: {retry_e}")
