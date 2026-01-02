@@ -35,10 +35,11 @@ app = Flask(__name__)
 BOT_APP = None
 WEBHOOK_SET = False  # CRITICAL: Prevents repeated webhook attempts
 
-# Event loop management for persistent async processing
+# Event loop management for serverless environment
 UPDATE_LOOP = None
 UPDATE_LOOP_THREAD = None
 UPDATE_QUEUE = asyncio.Queue()
+LOOP_LOCK = threading.Lock()  # Prevent concurrent loop creation
 
 def start_update_loop():
     """Start a persistent event loop in a background thread for processing updates"""
@@ -176,13 +177,27 @@ async def setup_bot():
         logger.error("Please set your Telegram bot token in the .env file or environment variables")
         logger.error("Get your bot token from @BotFather in Telegram")
         return None
-    
+
     logger.info("Setting up Telegram bot application...")
     try:
-        logger.info("Creating Application builder...")
+        logger.info("Creating Application builder with connection limits...")
+        from telegram.request import HTTPXRequest
+        import httpx
+
+        # Configure HTTPXRequest to prevent connection reuse issues in serverless
+        request_instance = HTTPXRequest(
+            connection_pool_size=1,
+            read_timeout=30,
+            write_timeout=30,
+            connect_timeout=30,
+            pool_timeout=30,
+            limits=httpx.Limits(max_keepalive_connections=0, max_connections=1)
+        )
+
         application = (
             Application.builder()
             .token(BOT_TOKEN)
+            .request(request_instance)
             .concurrent_updates(True)
             .build()
         )
@@ -195,7 +210,7 @@ async def setup_bot():
         application.add_handler(CommandHandler("nextrace", nextrace_cmd))
         application.add_handler(CommandHandler("live", live_cmd))
         application.add_handler(CallbackQueryHandler(button_handler))
-        
+
         logger.info("✅ Bot setup successful")
         logger.info("=== BOT INITIALIZATION COMPLETE ===")
         return application
@@ -332,17 +347,8 @@ def webhook():
             logger.warning("Failed to create update object")
             return jsonify({"status": "ok"}), 200
 
-        # Process update directly in a new event loop (serverless-friendly)
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(process_update_async(bot_app, update, update_id))
-            loop.close()
-            logger.info(f"✅ Update {update_id} processed successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to process update {update_id}: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
+        # Use persistent event loop to avoid "Event loop is closed" errors
+        submit_update_to_loop(bot_app, update, update_id)
 
     except Exception as e:
         logger.error(f"❌ Error processing update {update_id}: {e}")
