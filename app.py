@@ -42,6 +42,17 @@ UPDATE_LOOP_THREAD = None
 UPDATE_QUEUE = asyncio.Queue()
 LOOP_LOCK = threading.Lock()  # Prevent concurrent loop creation
 
+# Store the main event loop to prevent conflicts
+_MAIN_EVENT_LOOP = None
+
+def get_event_loop():
+    """Get the main event loop, creating it if necessary"""
+    global _MAIN_EVENT_LOOP
+    if _MAIN_EVENT_LOOP is None or _MAIN_EVENT_LOOP.is_closed():
+        _MAIN_EVENT_LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(_MAIN_EVENT_LOOP)
+    return _MAIN_EVENT_LOOP
+
 def start_update_loop():
     """Start a persistent event loop in a background thread for processing updates"""
     global UPDATE_LOOP, UPDATE_LOOP_THREAD
@@ -367,14 +378,15 @@ def webhook():
 def process_update_in_background(bot_app, update, update_id):
     """Process update in background thread with new event loop"""
     try:
-        # Create a new event loop for this thread
-        loop = asyncio.new_event_loop()
+        # Use the main event loop to prevent conflicts
+        loop = get_event_loop()
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(process_update_isolated(bot_app, update, update_id))
             logger.info(f"✅ Update {update_id} processed successfully in background")
         finally:
-            loop.close()
+            # Do not close the loop to prevent conflicts
+            pass
     except Exception as e:
         logger.error(f"❌ Error in background processing {update_id}: {e}")
         import traceback
@@ -391,10 +403,10 @@ async def process_update_isolated(bot_app, update, update_id):
         logger.error(f"Full traceback: {traceback.format_exc()}")
         # Handle specific errors
         error_str = str(e)
-        if "Event loop is closed" in error_str:
-            logger.warning("Event loop closed - restarting...")
+        if "Event loop is closed" in error_str or "is bound to a different event loop" in error_str:
+            logger.warning("Event loop issue detected - restarting...")
             # Restart the event loop
-            loop = asyncio.new_event_loop()
+            loop = get_event_loop()
             asyncio.set_event_loop(loop)
             # Retry processing
             try:

@@ -23,6 +23,20 @@ try:
 except ImportError:
     pass
 
+# Ensure proper event loop management
+import asyncio
+
+# Store the main event loop to prevent conflicts
+_MAIN_EVENT_LOOP = None
+
+def get_event_loop():
+    """Get the main event loop, creating it if necessary"""
+    global _MAIN_EVENT_LOOP
+    if _MAIN_EVENT_LOOP is None or _MAIN_EVENT_LOOP.is_closed():
+        _MAIN_EVENT_LOOP = asyncio.new_event_loop()
+        asyncio.set_event_loop(_MAIN_EVENT_LOOP)
+    return _MAIN_EVENT_LOOP
+
 # Playwright imports for F1 timing scraping
 try:
     from playwright.async_api import async_playwright
