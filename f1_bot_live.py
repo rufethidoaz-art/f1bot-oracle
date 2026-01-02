@@ -16,6 +16,13 @@ from zoneinfo import ZoneInfo
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
+# Configure the event loop policy to avoid issues with nested event loops
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass
+
 # Playwright imports for F1 timing scraping
 try:
     from playwright.async_api import async_playwright
@@ -33,6 +40,22 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+
+# Configure HTTP client with increased connection pool size
+import httpx
+from telegram.request import HTTPXRequest
+
+# Create a custom HTTPX client with increased connection pool limits
+custom_client = httpx.AsyncClient(
+    limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+    timeout=httpx.Timeout(30.0, connect=10.0, read=30.0, write=30.0),
+)
+
+# Configure the Telegram bot to use the custom HTTPX client
+class CustomHTTPXRequest(HTTPXRequest):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._client = custom_client
 
 # Azerbaijani translations (simplified)
 TRANSLATIONS = {
@@ -1739,41 +1762,48 @@ class F1TimingScraper:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message with comprehensive inline keyboard"""
-    if update.effective_user:
-        logger.info(f"User {update.effective_user.id} started the bot")
-    else:
-        logger.info("User started the bot (unknown user)")
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                TRANSLATIONS["driver_standings"], callback_data="standings"
-            ),
-            InlineKeyboardButton(
-                TRANSLATIONS["constructor_standings"], callback_data="constructors"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                TRANSLATIONS["last_session"], callback_data="lastrace"
-            ),
-            InlineKeyboardButton(
-                TRANSLATIONS["schedule_weather"], callback_data="nextrace"
-            ),
-        ],
-        [
-            InlineKeyboardButton(TRANSLATIONS["live_timing"], callback_data="live"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    try:
+        if update.effective_user:
+            logger.info(f"User {update.effective_user.id} started the bot")
+        else:
+            logger.info("User started the bot (unknown user)")
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    TRANSLATIONS["driver_standings"], callback_data="standings"
+                ),
+                InlineKeyboardButton(
+                    TRANSLATIONS["constructor_standings"], callback_data="constructors"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    TRANSLATIONS["last_session"], callback_data="lastrace"
+                ),
+                InlineKeyboardButton(
+                    TRANSLATIONS["schedule_weather"], callback_data="nextrace"
+                ),
+            ],
+            [
+                InlineKeyboardButton(TRANSLATIONS["live_timing"], callback_data="live"),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-    welcome_text = f"""{TRANSLATIONS["welcome_title"]}
-    
+        welcome_text = f"""{TRANSLATIONS["welcome_title"]}
+         
 {TRANSLATIONS["welcome_text"]}"""
 
-    if isinstance(update.message, Message):
-        await update.message.reply_text(
-            welcome_text, reply_markup=reply_markup, parse_mode="Markdown"
-        )
+        if isinstance(update.message, Message):
+            await update.message.reply_text(
+                welcome_text, reply_markup=reply_markup, parse_mode="Markdown"
+            )
+    except Exception as e:
+        logger.error(f"Error in start handler: {e}")
+        if isinstance(update.message, Message):
+            await update.message.reply_text(
+                f"❌ Xəta baş verdi: {str(e)}", parse_mode="Markdown"
+            )
 
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):

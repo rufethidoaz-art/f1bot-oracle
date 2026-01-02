@@ -21,6 +21,7 @@ from f1_bot_live import (
     lastrace_cmd,
     nextrace_cmd,
     live_cmd,
+    CustomHTTPXRequest,
 )
 
 logging.basicConfig(
@@ -180,19 +181,17 @@ async def setup_bot():
 
     logger.info("Setting up Telegram bot application...")
     try:
-        logger.info("Creating Application builder with connection limits...")
-        from telegram.request import HTTPXRequest
-        import httpx
-
-        # Configure HTTPXRequest to prevent connection reuse issues in serverless
-        request_instance = HTTPXRequest(
-            connection_pool_size=1,
+        logger.info("Creating Application builder with custom HTTPX client...")
+    
+        # Use the custom HTTPX client with increased connection pool size
+        request_instance = CustomHTTPXRequest(
+            connection_pool_size=100,
             read_timeout=30,
             write_timeout=30,
             connect_timeout=30,
             pool_timeout=30
         )
-
+    
         application = (
             Application.builder()
             .token(BOT_TOKEN)
@@ -390,6 +389,33 @@ async def process_update_isolated(bot_app, update, update_id):
         logger.error(f"❌ Error in isolated update processing {update_id}: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
+        # Handle specific errors
+        error_str = str(e)
+        if "Event loop is closed" in error_str:
+            logger.warning("Event loop closed - restarting...")
+            # Restart the event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # Retry processing
+            try:
+                await bot_app.process_update(update)
+                logger.info(f"✅ Update {update_id} processed successfully after loop restart")
+            except Exception as retry_e:
+                logger.error(f"❌ Retry failed for update {update_id}: {retry_e}")
+        elif "Pool timeout" in error_str or "All connections in the connection pool are occupied" in error_str:
+            logger.warning("Connection pool timeout - retrying with new client...")
+            # Restart the bot application with a new HTTP client
+            try:
+                await bot_app.shutdown()
+                bot_app = await setup_bot()
+                if bot_app:
+                    await bot_app.initialize()
+                    await bot_app.process_update(update)
+                    logger.info(f"✅ Update {update_id} processed successfully after client restart")
+                else:
+                    logger.error(f"❌ Failed to restart bot application for update {update_id}")
+            except Exception as retry_e:
+                logger.error(f"❌ Retry failed for update {update_id}: {retry_e}")
         raise
 
 @app.route("/debug")
