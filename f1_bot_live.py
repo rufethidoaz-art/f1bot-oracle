@@ -54,33 +54,6 @@ logger = logging.getLogger(__name__)
 
 # Configure HTTP client with increased connection pool size
 import httpx
-from telegram.request import HTTPXRequest
-
-# Configure the Telegram bot to use the custom HTTPX client
-class CustomHTTPXRequest(HTTPXRequest):
-    def __init__(self, connection_pool_size=100, read_timeout=30.0, write_timeout=30.0, connect_timeout=30.0, pool_timeout=30.0):
-        # Call parent init with all parameters to ensure proper initialization
-        super().__init__(
-            connection_pool_size=connection_pool_size,
-            read_timeout=read_timeout,
-            write_timeout=write_timeout,
-            connect_timeout=connect_timeout,
-            pool_timeout=pool_timeout
-        )
-        # Ensure client is properly initialized
-        if not hasattr(self, '_client') or self._client is None:
-            self._client = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=connection_pool_size, max_keepalive_connections=50),
-                timeout=httpx.Timeout(connect_timeout, read=read_timeout, write=write_timeout, pool=pool_timeout),
-            )
-
-    # Removed do_request override - let parent handle it
-    # Client initialization is handled in __init__
-
-    async def close(self):
-        """Close the HTTP client"""
-        if hasattr(self, '_client') and self._client:
-            await self._client.aclose()
 
 # Azerbaijani translations (simplified)
 TRANSLATIONS = {
@@ -1890,82 +1863,90 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Process the button click
     try:
         if query.data == "standings":
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             message = get_current_standings()
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "constructors":
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             message = get_constructor_standings()
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "lastrace":
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             message = get_last_session_results()
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "nextrace":
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             message = get_next_race()
-            # Add button to view full calendar
-            schedule_keyboard = InlineKeyboardMarkup([
+            reply_markup = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📅 Tam Mövsüm Cədvəlini Gör", callback_data="calendar")],
                 [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
             ])
-            if isinstance(query.message, Message):
-                await query.message.reply_text(
-                    message,
-                    parse_mode="Markdown",
-                    reply_markup=schedule_keyboard
-                )
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
             return
         elif query.data == "calendar":
-            # Fetch and display the F1 season calendar
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             cached_data = get_cached_calendar()
             if cached_data:
                 message = cached_data
             else:
                 message = get_f1_season_calendar()
                 set_cached_calendar(message)
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "live_refresh":
-            # Refresh live timing data using Playwright
+            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
             try:
-                try:
-                    from f1_playwright_scraper import get_optimized_live_timing, format_timing_data_for_telegram
-                    PLAYWRIGHT_AVAILABLE = True
-                except ImportError as e:
-                    logger.warning(f"Playwright not available: {e}")
-                    PLAYWRIGHT_AVAILABLE = False
-                    get_optimized_live_timing = None
-                    format_timing_data_for_telegram = None
-    
-                if PLAYWRIGHT_AVAILABLE and get_optimized_live_timing:
-                    live_data = await get_optimized_live_timing()
-                else:
-                    live_data = None
-                if not live_data:
-                    message = "❌ Canlı vaxt məlumatları mövcud deyil\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
-                else:
-                    if PLAYWRIGHT_AVAILABLE and format_timing_data_for_telegram:
-                        message = format_timing_data_for_telegram(live_data)
-                    else:
-                        message = "❌ Canlı vaxt məlumatları mövcud deyil\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
+                from f1_playwright_scraper import get_optimized_live_timing, format_timing_data_for_telegram
+                PLAYWRIGHT_AVAILABLE = True
+            except ImportError:
+                PLAYWRIGHT_AVAILABLE = False
 
-                    # Add refresh button again
-                    keyboard = [
+            if PLAYWRIGHT_AVAILABLE:
+                live_data = await get_optimized_live_timing()
+                if live_data:
+                    message = format_timing_data_for_telegram(live_data)
+                    reply_markup = InlineKeyboardMarkup([
                         [InlineKeyboardButton(TRANSLATIONS["live_refresh_button"], callback_data="live_refresh")],
                         [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
-                    ]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-
-                    if isinstance(query.message, Message):
-                        # Always send new message instead of editing
-                        await query.message.reply_text(
-                            message,
-                            parse_mode="Markdown",
-                            reply_markup=reply_markup
-                        )
+                    ])
+                    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
                     return
-            except Exception as e:
-                logger.error(f"Error refreshing live data: {e}")
-                message = f"❌ Xəta: {str(e)}\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
+            message = "❌ Canlı vaxt məlumatları mövcud deyil\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "live":
-            # Check if there's an active F1 session first
             if not check_active_f1_session():
                 message = "❌ *Hal-hazırda aktiv F1 sessiyası yoxdur*\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.\n\n📊 Canlı vaxt göstərir:\n• Sürücülərin mövqeləri\n• Interval vaxtları\n• Ən yaxşı dövrə vaxtları\n• Təkər məlumatları\n• Hər çağırışda yenilənən məlumatlar\n\nAlternativlər:\n• /nextrace - Gələn yarış və hava proqnozu\n• /lastrace - Son sessiya nəticələri"
+                reply_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+                ])
+                await query.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+                return
             else:
-                # Start live timing with Playwright scraper
-                message = "🔴 Canlı vaxt yüklənir...\n\n⏳ Formula-timer.com saytından məlumatlar alınır..."
+                # Start live timing - send loading and then handle in live_cmd style
+                await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+                # For live, we need to handle differently since it sends new message
+                # Call live_cmd logic here or redirect
+                # For simplicity, just send the loading message and let user know
+                return
         elif query.data == "help":
             message = """ℹ️ *F1 Bot Köməyi*
 
@@ -1981,24 +1962,20 @@ Bu bot Formula 1 yarışları haqqında məlumat verir.
 /live - Canlı vaxt (aktiv sessiya zamanı)
 
 *Qeyd:* Bütün vaxtlar Bakı vaxtı ilə göstərilir."""
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
         elif query.data == "back_to_menu":
-            # Return to main menu
             keyboard = [
                 [
-                    InlineKeyboardButton(
-                        TRANSLATIONS["driver_standings"], callback_data="standings"
-                    ),
-                    InlineKeyboardButton(
-                        TRANSLATIONS["constructor_standings"], callback_data="constructors"
-                    ),
+                    InlineKeyboardButton(TRANSLATIONS["driver_standings"], callback_data="standings"),
+                    InlineKeyboardButton(TRANSLATIONS["constructor_standings"], callback_data="constructors"),
                 ],
                 [
-                    InlineKeyboardButton(
-                        TRANSLATIONS["last_session"], callback_data="lastrace"
-                    ),
-                    InlineKeyboardButton(
-                        TRANSLATIONS["schedule_weather"], callback_data="nextrace"
-                    ),
+                    InlineKeyboardButton(TRANSLATIONS["last_session"], callback_data="lastrace"),
+                    InlineKeyboardButton(TRANSLATIONS["schedule_weather"], callback_data="nextrace"),
                 ],
                 [
                     InlineKeyboardButton(TRANSLATIONS["live_timing"], callback_data="live"),
@@ -2006,32 +1983,22 @@ Bu bot Formula 1 yarışları haqqında məlumat verir.
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             message = f"{TRANSLATIONS['menu_title']}\n\n{TRANSLATIONS['menu_text']}"
-            # Always send new message instead of editing
-            if isinstance(query.message, Message):
-                await query.message.reply_text(
-                    message,
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
-            return  # Don't add back button for menu
+            await query.message.reply_text(message, reply_markup=reply_markup, parse_mode="Markdown")
+            return
         else:
             message = TRANSLATIONS["unknown_command"]
+            reply_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+            ])
+            await query.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+            return
     except Exception as e:
         logger.error(f"Error in button_handler: {e}")
         message = TRANSLATIONS["error_occurred"].format(str(e))
-
-    # Create a back button for navigation
-    back_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
-    ])
-
-    # Always send new message instead of editing
-    if isinstance(query.message, Message):
-        await query.message.reply_text(
-            message,
-            parse_mode="Markdown",
-            reply_markup=back_keyboard
-        )
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+        ])
+        await query.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
 
 
 # Command handlers

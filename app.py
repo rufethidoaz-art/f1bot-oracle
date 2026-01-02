@@ -7,7 +7,6 @@ import os
 import sys
 import logging
 import asyncio
-import threading
 from flask import Flask, request, jsonify
 from telegram import Update, Bot, Message
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -17,7 +16,6 @@ from f1_bot_live import (
     show_menu,
     button_handler,
     live_cmd,
-    CustomHTTPXRequest,
     get_current_standings,
     get_constructor_standings,
     get_last_session_results,
@@ -37,161 +35,45 @@ BOT_APP = None
 WEBHOOK_SET = False  # CRITICAL: Prevents repeated webhook attempts
 BOT_INITIALIZED = False  # Track if bot was ever initialized
 
-# Event loop management for serverless environment
-UPDATE_LOOP = None
-UPDATE_LOOP_THREAD = None
-UPDATE_QUEUE = asyncio.Queue()
-LOOP_LOCK = threading.Lock()  # Prevent concurrent loop creation
-
-# Store the main event loop to prevent conflicts
-_MAIN_EVENT_LOOP = None
-
 # Track processed update IDs to prevent duplicate processing
 PROCESSED_UPDATES = set()
-UPDATE_LOCK = threading.Lock()  # Thread-safe access to processed updates
 MAX_PROCESSED_UPDATES = 1000  # Keep only recent updates to prevent memory issues
-
-# Message tracking to prevent duplicate processing
-MESSAGE_IDS_TO_DELETE = set()
-MESSAGE_LOCK = threading.Lock()
-
-def get_event_loop():
-    """Get the main event loop, creating it if necessary"""
-    global _MAIN_EVENT_LOOP
-    try:
-        # Try to get the current event loop
-        loop = asyncio.get_running_loop()
-        if loop and not loop.is_closed():
-            return loop
-    except RuntimeError:
-        # No running loop, continue to create new one
-        pass
-    
-    if _MAIN_EVENT_LOOP is None or _MAIN_EVENT_LOOP.is_closed():
-        _MAIN_EVENT_LOOP = asyncio.new_event_loop()
-        asyncio.set_event_loop(_MAIN_EVENT_LOOP)
-    return _MAIN_EVENT_LOOP
 
 def is_update_processed(update_id):
     """Check if update has already been processed"""
-    with UPDATE_LOCK:
-        return update_id in PROCESSED_UPDATES
+    return update_id in PROCESSED_UPDATES
 
 def mark_update_processed(update_id):
     """Mark update as processed"""
-    with UPDATE_LOCK:
-        PROCESSED_UPDATES.add(update_id)
-        # Keep only recent updates to prevent memory issues
-        if len(PROCESSED_UPDATES) > MAX_PROCESSED_UPDATES:
-            # Remove oldest updates (this is a simple approach)
-            PROCESSED_UPDATES.clear()
+    PROCESSED_UPDATES.add(update_id)
+    # Keep only recent updates to prevent memory issues
+    if len(PROCESSED_UPDATES) > MAX_PROCESSED_UPDATES:
+        # Remove oldest updates (this is a simple approach)
+        PROCESSED_UPDATES.clear()
 
-def start_update_loop():
-    """Start a persistent event loop in a background thread for processing updates"""
-    global UPDATE_LOOP, UPDATE_LOOP_THREAD
-
-    if UPDATE_LOOP_THREAD is not None and UPDATE_LOOP_THREAD.is_alive():
-        logger.info("Update loop thread already running")
-        return
-
-    def run_loop():
-        global UPDATE_LOOP
-        logger.info("Started persistent update event loop")
-
-        try:
-            asyncio.run(process_update_queue())
-        except Exception as e:
-            logger.error(f"Error in update loop: {e}")
-        finally:
-            logger.info("Update event loop closed")
-
-    UPDATE_LOOP_THREAD = threading.Thread(target=run_loop, daemon=True)
-    UPDATE_LOOP_THREAD.start()
-    logger.info("Update loop thread started")
-
-async def process_update_queue():
-    """Process updates from the queue in the persistent event loop"""
-    while True:
-        try:
-            # Wait for an update to process
-            update_data = await UPDATE_QUEUE.get()
-            bot_app = update_data['bot_app']
-            update = update_data['update']
-            update_id = update_data['update_id']
-
-            # Process the update
-            await bot_app.process_update(update)
-            logger.info(f"✅ Update {update_id} processed successfully")
-
-        except Exception as e:
-            logger.error(f"❌ Error processing update from queue: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
-        finally:
-            UPDATE_QUEUE.task_done()
-
-def submit_update_to_loop(bot_app, update, update_id):
-    """Submit an update to be processed by the persistent event loop"""
-    global UPDATE_LOOP
-
-    # Ensure the update loop is running
-    if UPDATE_LOOP is None or UPDATE_LOOP_THREAD is None or (UPDATE_LOOP_THREAD is not None and not UPDATE_LOOP_THREAD.is_alive()):
-        logger.info("Starting update loop...")
-        start_update_loop()
-        # Give the loop more time to start and be ready
-        import time
-        time.sleep(0.5)  # Increased from 0.1 to 0.5 seconds
-
-    # Try to submit to the persistent loop
-    if UPDATE_LOOP is not None and UPDATE_LOOP_THREAD is not None and UPDATE_LOOP_THREAD.is_alive():
-        try:
-            # Submit the update to the queue
-            future = asyncio.run_coroutine_threadsafe(
-                UPDATE_QUEUE.put({
-                    'bot_app': bot_app,
-                    'update': update,
-                    'update_id': update_id
-                }),
-                UPDATE_LOOP
-            )
-            # Wait for submission confirmation
-            future.result(timeout=2.0)  # Increased timeout
-            logger.info(f"📤 Update {update_id} submitted to persistent loop")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to submit update {update_id} to loop: {e}")
-
-    # Fallback: Process directly using the main event loop
-    logger.warning(f"⚠️ Update loop not available, falling back to direct processing for {update_id}")
+async def process_update_isolated(bot_app, update, update_id):
+    """Process update in an isolated async context to prevent event loop conflicts"""
     try:
-        # Get the main event loop
-        loop = get_event_loop()
-        
-        # Run the processing in the event loop
-        if loop.is_running():
-            # If loop is already running, schedule the coroutine
-            future = asyncio.run_coroutine_threadsafe(
-                process_update_isolated(bot_app, update, update_id),
-                loop
-            )
-            # Wait for completion with timeout
-            try:
-                future.result(timeout=10.0)
-                logger.info(f"✅ Update {update_id} processed via direct fallback")
-                return True
-            except Exception as e:
-                logger.error(f"❌ Direct processing timeout for {update_id}: {e}")
-                return False
-        else:
-            # If loop is not running, run it
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(process_update_isolated(bot_app, update, update_id))
-            logger.info(f"✅ Update {update_id} processed via direct fallback")
-            return True
-            
+        # Ensure bot_app is provided
+        if bot_app is None:
+            logger.error(f"❌ Bot app is None for update {update_id}")
+            return
+
+        # Process the update (bot should already be initialized)
+        await bot_app.process_update(update)
+        logger.info(f"✅ Update {update_id} processed successfully")
+
     except Exception as e:
-        logger.error(f"❌ Direct processing failed for update {update_id}: {e}")
-        return False
+        logger.error(f"❌ Error in isolated update processing {update_id}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+
+        # Handle specific errors
+        error_str = str(e)
+        if "Event loop is closed" in error_str:
+            logger.warning("Event loop closed error - this should not happen with proper initialization")
+        elif "not initialized" in error_str.lower():
+            logger.warning("Application not initialized - this should not happen")
 
 # Get webhook URL from environment variable
 def get_webhook_url():
@@ -240,22 +122,31 @@ async def setup_bot():
 
     logger.info("Setting up Telegram bot application...")
     try:
-        logger.info("Creating Application builder with custom HTTPX client...")
-    
-        # Use the custom HTTPX client with increased connection pool size
-        # Create fresh instance for each bot setup to avoid event loop issues
-        request_instance = CustomHTTPXRequest(
-            connection_pool_size=100,
-            read_timeout=30,
-            write_timeout=30,
-            connect_timeout=30,
-            pool_timeout=30
+        logger.info("Creating Application builder...")
+
+        # Create HTTPXRequest with explicit client initialization
+        import httpx
+        from telegram.request import HTTPXRequest
+
+        httpx_request = HTTPXRequest(
+            connection_pool_size=20,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            connect_timeout=30.0,
+            pool_timeout=30.0
         )
-    
+
+        # Ensure the client is initialized
+        if not hasattr(httpx_request, '_client') or httpx_request._client is None:
+            httpx_request._client = httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                timeout=httpx.Timeout(30.0, read=30.0, write=30.0, pool=30.0),
+            )
+
         application = (
             Application.builder()
             .token(BOT_TOKEN)
-            .request(request_instance)
+            .request(httpx_request)
             .concurrent_updates(True)
             .build()
         )
@@ -403,7 +294,7 @@ def health_check():
     }
 
 @app.route("/webhook", methods=["POST"])
-def webhook():
+async def webhook():
     """Handle incoming webhook updates from Telegram"""
     global BOT_APP
     json_data = request.get_json(force=True, silent=True)
@@ -426,7 +317,7 @@ def webhook():
         # Initialize bot application if not already done
         if BOT_APP is None:
             logger.info("Initializing bot application...")
-            success = asyncio.run(initialize_bot_app())
+            success = await initialize_bot_app()
             if not success:
                 logger.error("❌ Failed to initialize bot")
                 return jsonify({"status": "error", "message": "Bot initialization failed"}), 500
@@ -442,85 +333,17 @@ def webhook():
             logger.warning("Failed to create update object")
             return jsonify({"status": "ok"}), 200
 
-        # Process update in background thread with proper event loop handling
-        thread = threading.Thread(
-            target=process_update_in_background,
-            args=(bot_app, update, update_id),
-            daemon=True
-        )
-        thread.start()
-        logger.info(f"🧵 Started background thread for update {update_id}")
+        # Process update directly in the same async context
+        await process_update_isolated(bot_app, update, update_id)
 
     except Exception as e:
         logger.error(f"❌ Error processing update {update_id}: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
 
-    # Return immediately to avoid Telegram timeout
+    # Return success response
     return jsonify({"status": "ok"}), 200
 
-def process_update_in_background(bot_app, update, update_id):
-    """Process update in background thread with proper async handling"""
-    try:
-        # Get the main event loop
-        loop = get_event_loop()
-        
-        # Run the processing in the event loop
-        if loop.is_running():
-            # If loop is already running, schedule the coroutine
-            future = asyncio.run_coroutine_threadsafe(
-                process_update_isolated(bot_app, update, update_id),
-                loop
-            )
-            # Wait for completion with timeout
-            try:
-                future.result(timeout=10.0)
-            except Exception as e:
-                logger.error(f"❌ Background processing timeout for {update_id}: {e}")
-        else:
-            # If loop is not running, run it
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(process_update_isolated(bot_app, update, update_id))
-            
-    except Exception as e:
-        logger.error(f"❌ Error in background processing {update_id}: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-
-async def process_update_isolated(bot_app, update, update_id):
-    """Process update in an isolated async context to prevent event loop conflicts"""
-    try:
-        # Ensure bot_app is provided
-        if bot_app is None:
-            logger.error(f"❌ Bot app is None for update {update_id}")
-            return
-        
-        # Process the update (bot should already be initialized)
-        await bot_app.process_update(update)
-        logger.info(f"✅ Update {update_id} processed successfully")
-        
-    except Exception as e:
-        logger.error(f"❌ Error in isolated update processing {update_id}: {e}")
-        import traceback
-        logger.error(f"Full traceback: {traceback.format_exc()}")
-        
-        # Handle specific errors
-        error_str = str(e)
-        if "Event loop is closed" in error_str:
-            logger.warning("Event loop closed error - this should not happen with proper initialization")
-        elif "not initialized" in error_str.lower():
-            logger.warning("Application not initialized - this should not happen")
-    finally:
-        # Clean up HTTP clients to prevent resource leaks
-        try:
-            if bot_app is not None and hasattr(bot_app, 'bot') and bot_app.bot is not None:
-                if hasattr(bot_app.bot, 'request') and hasattr(bot_app.bot.request, '_client'):
-                    try:
-                        await bot_app.bot.request._client.aclose()
-                    except Exception:
-                        pass
-        except Exception:
-            pass
 
 @app.route("/debug")
 def debug():

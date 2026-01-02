@@ -113,15 +113,15 @@ class OptimizedLiveTimingScraper:
                     if tyre_img and tyre_img.get('src'):
                         src = tyre_img.get('src')
                         if 'soft' in src.lower():
-                            tyre_compound = "S🔴"
+                            tyre_compound = "S"
                         elif 'medium' in src.lower():
-                            tyre_compound = "M🟡"
+                            tyre_compound = "M"
                         elif 'hard' in src.lower():
-                            tyre_compound = "H⚪"
+                            tyre_compound = "H"
                         elif 'intermediate' in src.lower() or 'inter' in src.lower():
-                            tyre_compound = "I🟢"
+                            tyre_compound = "I"
                         elif 'wet' in src.lower():
-                            tyre_compound = "W🔵"
+                            tyre_compound = "W"
 
                     best_lap_cell = cells[3]
                     best_lap = best_lap_cell.get_text(strip=True)
@@ -195,15 +195,15 @@ class OptimizedLiveTimingScraper:
 def format_timing_data_for_telegram(data):
     """Format the scraped data for Telegram bot display"""
     if not data:
-        return "❌ No live timing data available"
+        return "No live timing data available"
 
     session = data.get('session', {})
     timing = data.get('timing', [])
 
-    message = f"🏁 {session.get('name', 'F1 Session')}\n\n"
+    message = f"SESSION: {session.get('name', 'F1 Session')}\n\n"
 
     if timing:
-        message += "🏎️ Live Timing:\n"
+        message += "LIVE TIMING:\n"
         for driver in timing:
             pos = driver.get('position', 'N/A')
             name = driver.get('driver', 'N/A')
@@ -213,10 +213,10 @@ def format_timing_data_for_telegram(data):
 
             message += f"P{pos}: {name} | {interval} | {best_lap} | {tyre}\n"
     else:
-        message += "⚠️ No timing data available - session may not be active\n"
+        message += "No timing data available - session may not be active\n"
 
     now = datetime.now()
-    message += f"\n🕐 Last update: {now.strftime('%H:%M:%S')}"
+    message += f"\nLast update: {now.strftime('%H:%M:%S')}"
 
     return message
 
@@ -252,17 +252,17 @@ async def cleanup_optimized_scraper():
 
 async def main():
     """Test the optimized scraper"""
-    print("🏎️ Testing Optimized Formula-Timer.com Live Timing Scraper")
+    print("Testing Optimized Formula-Timer.com Live Timing Scraper")
     print("=" * 60)
 
     scraper = OptimizedLiveTimingScraper()
 
     if await scraper.initialize():
-        print("✅ Browser initialized successfully!")
+        print("Browser initialized successfully!")
 
         # Test multiple data fetches without reloading
         for i in range(3):
-            print(f"\n📊 Fetch #{i+1}:")
+            print(f"\nFetch #{i+1}:")
             data = await scraper.get_live_data()
 
             if data:
@@ -270,15 +270,15 @@ async def main():
                 print(f"  Timing entries: {len(data['timing'])}")
                 print(f"  Race control messages: {len(data['race_control'])}")
             else:
-                print("  ❌ No data received")
+                print("  No data received")
 
             if i < 2:  # Don't sleep after last iteration
                 await asyncio.sleep(5)
 
         await scraper.cleanup()
-        print("\n✅ Test completed successfully!")
+        print("\nTest completed successfully!")
     else:
-        print("❌ Failed to initialize browser")
+        print("Failed to initialize browser")
 
 if __name__ == "__main__":
     asyncio.run(main())
