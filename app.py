@@ -54,6 +54,15 @@ MAX_PROCESSED_UPDATES = 1000  # Keep only recent updates to prevent memory issue
 def get_event_loop():
     """Get the main event loop, creating it if necessary"""
     global _MAIN_EVENT_LOOP
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_running_loop()
+        if loop and not loop.is_closed():
+            return loop
+    except RuntimeError:
+        # No running loop, continue to create new one
+        pass
+    
     if _MAIN_EVENT_LOOP is None or _MAIN_EVENT_LOOP.is_closed():
         _MAIN_EVENT_LOOP = asyncio.new_event_loop()
         asyncio.set_event_loop(_MAIN_EVENT_LOOP)
@@ -452,8 +461,11 @@ async def process_update_isolated(bot_app, update, update_id):
     finally:
         # Ensure HTTP clients are properly closed
         try:
-            if hasattr(bot_app, 'bot') and hasattr(bot_app.bot, 'request') and hasattr(bot_app.bot.request, 'close'):
-                await bot_app.bot.request.close()
+            if hasattr(bot_app, 'bot') and hasattr(bot_app.bot, 'request'):
+                request_obj = bot_app.bot.request
+                # Only try to close if it's our custom request type with _client attribute
+                if hasattr(request_obj, '_client') and hasattr(request_obj, 'close'):
+                    await request_obj.close()
         except (AttributeError, TypeError):
             # close method may not exist on all request types
             pass
