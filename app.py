@@ -136,7 +136,7 @@ def submit_update_to_loop(bot_app, update, update_id):
 # Get webhook URL from environment variable
 def get_webhook_url():
     """Get webhook URL from environment or use the default domain"""
-    return os.getenv("WEBHOOK_URL", "https://f1bot2026update-rufethidoaz6750-7wm14mbj.leapcell.dev/webhook")
+    return os.getenv("WEBHOOK_URL", "https://f1bot2026update-rhidayetov9689-hrfji06h.leapcell.dev/webhook")
 
 def get_bot_token():
     """Get bot token from environment or .env file"""
@@ -346,15 +346,51 @@ def webhook():
             logger.warning("Failed to create update object")
             return jsonify({"status": "ok"}), 200
 
-        # Use persistent event loop to avoid "Event loop is closed" errors
-        submit_update_to_loop(bot_app, update, update_id)
+        # Process update in background thread to avoid timeout
+        # Telegram expects webhook response within 10 seconds
+        import threading
+        thread = threading.Thread(
+            target=process_update_in_background,
+            args=(bot_app, update, update_id),
+            daemon=True
+        )
+        thread.start()
+        logger.info(f"🧵 Started background thread for update {update_id}")
 
     except Exception as e:
         logger.error(f"❌ Error processing update {update_id}: {e}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
 
+    # Return immediately to avoid Telegram timeout
     return jsonify({"status": "ok"}), 200
+
+def process_update_in_background(bot_app, update, update_id):
+    """Process update in background thread with new event loop"""
+    try:
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(process_update_isolated(bot_app, update, update_id))
+            logger.info(f"✅ Update {update_id} processed successfully in background")
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"❌ Error in background processing {update_id}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+
+async def process_update_isolated(bot_app, update, update_id):
+    """Process update in an isolated async context to prevent event loop conflicts"""
+    try:
+        await bot_app.process_update(update)
+        logger.info(f"✅ Update {update_id} processed successfully")
+    except Exception as e:
+        logger.error(f"❌ Error in isolated update processing {update_id}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        raise
 
 @app.route("/debug")
 def debug():
