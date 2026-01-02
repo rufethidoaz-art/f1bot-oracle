@@ -124,17 +124,24 @@ async def setup_bot():
     try:
         logger.info("Creating Application builder...")
 
-        # Create HTTPXRequest for serverless compatibility
+        # Create HTTPXRequest with explicit client initialization
         import httpx
         from telegram.request import HTTPXRequest
 
         httpx_request = HTTPXRequest(
-            connection_pool_size=8,
+            connection_pool_size=20,
             read_timeout=30.0,
             write_timeout=30.0,
             connect_timeout=30.0,
             pool_timeout=30.0
         )
+
+        # Ensure the client is initialized
+        if not hasattr(httpx_request, '_client') or httpx_request._client is None:
+            httpx_request._client = httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                timeout=httpx.Timeout(30.0, read=30.0, write=30.0, pool=30.0),
+            )
 
         application = (
             Application.builder()
