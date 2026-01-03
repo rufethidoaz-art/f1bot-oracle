@@ -51,12 +51,16 @@ vercel
 #### Option B: Using Vercel Dashboard
 1. Go to [vercel.com/dashboard](https://vercel.com/dashboard)
 2. Click "Add New" → "Project"
-3. Import your GitHub repository
+3. Import your GitHub repository (`rufethidoaz-art/f1bot2026update`)
 4. Configure project settings:
-   - **Framework Preset**: Other
-   - **Build Command**: `bash vercel-build.sh`
-   - **Output Directory**: `api`
-   - **Install Command**: `pip install -r requirements.txt`
+
+| Setting | Value |
+|---------|-------|
+| **Framework Preset** | `Other` |
+| **Build Command** | `bash vercel-build.sh` |
+| **Output Directory** | `api` |
+| **Install Command** | `pip install -r requirements.txt` |
+| **Development Command** | (leave empty) |
 
 ### Step 3: Configure Environment Variables
 
