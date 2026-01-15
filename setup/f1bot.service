@@ -1,0 +1,15 @@
+[Unit]
+Description=F1 Telegram Bot
+After=network.target
+
+[Service]
+User=opc
+WorkingDirectory=/home/opc/f1bot2026update
+EnvironmentFile=/home/opc/f1bot2026update/.env
+ExecStart=/bin/bash -c 'source /home/opc/f1bot2026update/venv/bin/activate && python /home/opc/f1bot2026update/main.py'
+Restart=always
+RestartSec=5
+
+
+[Install]
+WantedBy=multi-user.target

@@ -42,10 +42,10 @@ except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     logging.warning("Playwright not available. Live timing will use API fallback only.")
 
-# Configure logging optimized for Leapcell limits (WARNING level to reduce log storage)
+# Configure logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.WARNING,
+    level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
     ],
@@ -204,6 +204,9 @@ COUNTRY_FLAGS = {
     "Argentine": "🇦🇷",
     # Country codes (for OpenF1 API) - IOC codes
     "NED": "🇳🇱",
+    "NLD": "🇳🇱",
+    "NL": "🇳🇱",
+    "NET": "🇳🇱",
     "GBR": "🇬🇧",
     "AUS": "🇦🇺",
     "MCO": "🇲🇨",
@@ -255,7 +258,8 @@ def get_driver_data(season=None):
     if cache_key in DRIVER_DATA_CACHE:
         cached = DRIVER_DATA_CACHE[cache_key]
         if cached.get('timestamp') and (datetime.now(ZoneInfo("UTC")).timestamp() - cached['timestamp']) < 86400:  # 24 hours
-            return cached['data']
+            if cached.get('data'): # Only return if we actually have data
+                return cached['data']
 
     try:
         logger.info(f"Fetching driver data for season {season}")
@@ -347,21 +351,50 @@ def get_constructor_data(season=None):
         logger.error(f"Error fetching constructor data: {e}")
         return {}
 
+def get_driver_info_by_number(driver_number, season=None):
+    """Internal helper to find driver info dictionary by number with robust fallbacks"""
+    try:
+        drivers = get_driver_data(season)
+        if not drivers:
+            return None
+        
+        d_num = str(driver_number)
+        
+        # 1. Search by permanentNumber
+        for info in drivers.values():
+            if str(info.get('permanentNumber', '')) == d_num:
+                return info
+                
+        # 2. Specific Champion #1 logic (Max Verstappen)
+        if d_num == "1":
+            # Check by ID or Code
+            for d_id, info in drivers.items():
+                if d_id == 'max_verstappen' or info.get('code') == 'VER':
+                    return info
+            
+            # Check for alternative numbers (33 is permanent, 3 sometimes used in API tests)
+            for alt in ["33", "3"]:
+                for d_id, info in drivers.items():
+                    if str(info.get('permanentNumber', '')) == alt:
+                        if d_id == 'max_verstappen' or info.get('code') == 'VER':
+                            return info
+                            
+        return None
+    except Exception as e:
+        logger.error(f"Error in get_driver_info_by_number: {e}")
+        return None
+
 def get_driver_nationality_by_number(driver_number, season=None):
-    """Get driver nationality by permanent number"""
-    drivers = get_driver_data(season)
-    for driver_id, driver_info in drivers.items():
-        if str(driver_info.get('permanentNumber', '')) == str(driver_number):
-            return driver_info.get('nationality', '')
-    return ''
+    """Get driver nationality by number with robust fallbacks"""
+    info = get_driver_info_by_number(driver_number, season)
+    return info.get('nationality', '') if info else ''
 
 def get_driver_name_by_number(driver_number, season=None):
-    """Get driver name by permanent number"""
-    drivers = get_driver_data(season)
-    for driver_id, driver_info in drivers.items():
-        if str(driver_info.get('permanentNumber', '')) == str(driver_number):
-            return driver_info.get('full_name', f'Driver {driver_number}')
-    return f'Driver {driver_number}'
+    """Get driver name by number with robust fallbacks"""
+    info = get_driver_info_by_number(driver_number, season)
+    if info:
+        return info.get('full_name', f"Driver {driver_number}")
+    return f"Driver {driver_number}"
 
 def get_constructor_name_by_id(constructor_id, season=None):
     """Get constructor name by ID"""
@@ -871,19 +904,30 @@ def get_last_session_results():
                         "date": date,
                     }
 
-        # Get driver info from OpenF1 API first, then fallback to Ergast
         drivers_url = f"https://api.openf1.org/v1/drivers?session_key={session_key}"
         drivers_response = requests.get(drivers_url, timeout=10)
         drivers_info = {}
         if drivers_response.status_code == 200:
-            for driver in drivers_response.json():
-                driver_number = driver.get("driver_number")
-                if driver_number:
+            d_list = drivers_response.json()
+            logger.info(f"OpenF1 drivers count for session {session_key}: {len(d_list)}")
+            for driver in d_list:
+                # Use string keys for consistency
+                driver_num = str(driver.get("driver_number", ""))
+                if driver_num:
                     driver_name = f"{driver.get('first_name', '')} {driver.get('last_name', '')}".strip()
-                    country_code = driver.get("country_code") or get_driver_nationality_by_number(driver_number)
+                    country_code = driver.get("country_code")
+                    
+                    # Use robust fallback for name and nationality
+                    d_info = get_driver_info_by_number(driver_num)
+                    
+                    if not driver_name and d_info:
+                        driver_name = d_info.get('full_name')
+                    
+                    if not country_code:
+                        country_code = d_info.get('nationality', '') if d_info else ''
 
-                    drivers_info[driver_number] = {
-                        "name": driver_name or get_driver_name_by_number(driver_number),
+                    drivers_info[driver_num] = {
+                        "name": driver_name or f"Driver {driver_num}",
                         "country": country_code,
                         "team": driver.get("team_name", ""),
                     }
@@ -904,11 +948,16 @@ def get_last_session_results():
 
         for driver_number, pos_data in sorted_positions[:20]:
             position = pos_data["position"]
-            driver_info = drivers_info.get(driver_number, {})
-            driver_name = driver_info.get("name", f"Driver {driver_number}")
-            driver_country = driver_info.get("country", "")
+            str_num = str(driver_number)
+            d_info = drivers_info.get(str_num, {})
+            
+            driver_name = d_info.get("name") or get_driver_name_by_number(str_num)
+            driver_country = d_info.get("country") or get_driver_nationality_by_number(str_num)
             driver_flag = get_country_flag(driver_country)
-            team_name = driver_info.get("team", "")
+            team_name = d_info.get("team", "")
+
+            if position <= 3:
+                logger.info(f"Leaderboard P{position}: {driver_name} ({driver_country})")
 
             line = f"{position}. {driver_flag} {driver_name}"
 
@@ -963,18 +1012,29 @@ def get_f1_season_calendar():
             logger.error(f"Error parsing calendar data: {e}")
             return TRANSLATIONS["invalid_data"]
 
-        # Check for sprint weekends using OpenF1 API
+        # Check for sprint weekends using OpenF1 API as fallback
         sprint_weekends = {}
         try:
             sessions_url = f"https://api.openf1.org/v1/sessions?year={season}"
             sessions_response = requests.get(sessions_url, timeout=10)
             if sessions_response.status_code == 200:
                 sessions = sessions_response.json()
+                # Normalize country names to match Ergast
+                country_map = {
+                    "United Kingdom": "UK",
+                    "United States": "USA",
+                    "United Arab Emirates": "UAE"
+                }
                 for session in sessions:
                     if session.get("session_name") == "Sprint":
                         country_name = session.get("country_name", "")
                         if country_name:
+                            # Add both original and mapped name
                             sprint_weekends[country_name] = True
+                            if country_name in country_map:
+                                sprint_weekends[country_map[country_name]] = True
+                            # Case-insensitive too
+                            sprint_weekends[country_name.lower()] = True
         except Exception as e:
             logger.warning(f"Could not fetch sprint data from OpenF1: {e}")
 
@@ -992,34 +1052,39 @@ def get_f1_season_calendar():
 
                 flag = get_country_flag(country)
 
-                # Calculate weekend range based on race date (typically Sunday)
-                # F1 weekends run Friday to Sunday
+                # Calculate weekend range
                 try:
-                    # Handle different date formats from API
-                    if 'T' in race_date:
-                        race_dt = datetime.fromisoformat(race_date)
-                    else:
-                        # Handle date-only format like "2026-03-08"
-                        race_dt = datetime.strptime(race_date, "%Y-%m-%d")
+                    # Use FirstPractice for start of weekend if available, else fallback to 2 days before race
+                    fp1_date = race.get("FirstPractice", {}).get("date")
                     
-                    # Race is usually on Sunday, so weekend starts Friday
-                    weekend_start = race_dt - timedelta(days=2)  # Friday
-                    weekend_end = race_dt  # Sunday (race day)
+                    if race_date:
+                        if 'T' in race_date:
+                            race_dt = datetime.fromisoformat(race_date.replace("Z", "+00:00"))
+                        else:
+                            race_dt = datetime.strptime(race_date, "%Y-%m-%d")
+                        
+                        if fp1_date:
+                            weekend_start = datetime.strptime(fp1_date, "%Y-%m-%d")
+                        else:
+                            weekend_start = race_dt - timedelta(days=2)
+                        
+                        weekend_end = race_dt
 
-                    # Format as "Mar 03-05"
-                    if weekend_start.month == weekend_end.month:
-                        weekend_range = f"{weekend_start.strftime('%b')} {weekend_start.day}-{weekend_end.day}"
+                        # Format as "Mar 03-05"
+                        if weekend_start.month == weekend_end.month:
+                            weekend_range = f"{weekend_start.strftime('%b')} {weekend_start.day:02d}-{weekend_end.day:02d}"
+                        else:
+                            weekend_range = f"{weekend_start.strftime('%b %d')}-{weekend_end.strftime('%b %d')}"
                     else:
-                        weekend_range = f"{weekend_start.strftime('%b %d')}-{weekend_end.strftime('%b %d')}"
+                        weekend_range = "TBA"
                 except Exception as e:
-                    # Fallback to just race date if parsing fails
                     logger.warning(f"Could not calculate weekend range for {race_date}: {e}")
-                    baku_race_time = to_baku(race_date, race_time)
-                    weekend_range = baku_race_time.split()[0] if ' ' in baku_race_time else baku_race_time
+                    weekend_range = race_date or "TBA"
 
                 # Check if this is a sprint weekend
-                is_sprint_weekend = sprint_weekends.get(country, False)
-                sprint_indicator = " Sprint" if is_sprint_weekend else ""
+                # Primary source: Jolpi/Ergast has a 'Sprint' key
+                is_sprint_weekend = bool(race.get("Sprint"))
+                sprint_indicator = " ⚡️Sprint" if is_sprint_weekend else ""
 
                 message += f"{flag} {locality}, {weekend_range}{sprint_indicator}\n"
 
@@ -1908,29 +1973,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
             await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
             return
-        elif query.data == "live_refresh":
-            await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-            try:
-                from f1_playwright_scraper import get_optimized_live_timing, format_timing_data_for_telegram
-                PLAYWRIGHT_AVAILABLE = True
-            except ImportError:
-                PLAYWRIGHT_AVAILABLE = False
-
-            if PLAYWRIGHT_AVAILABLE:
-                live_data = await get_optimized_live_timing()
-                if live_data:
-                    message = format_timing_data_for_telegram(live_data)
-                    reply_markup = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(TRANSLATIONS["live_refresh_button"], callback_data="live_refresh")],
-                        [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
-                    ])
-                    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
-                    return
-            message = "❌ Canlı vaxt məlumatları mövcud deyil\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium"
-            reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
-            ])
-            await query.message.edit_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+        elif query.data == "stop_live":
+            # Cancel current chat jobs
+            current_jobs = context.job_queue.get_jobs_by_name(f"live_timing_{query.message.chat_id}")
+            for job in current_jobs:
+                job.schedule_removal()
+            
+            await query.message.edit_text(
+                "🛑 Canlı yayım dayandırıldı.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
+                ])
+            )
             return
         elif query.data == "live":
             if not check_active_f1_session():
@@ -2046,64 +2101,121 @@ async def nextrace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(message, parse_mode="Markdown")
 
 
-async def live_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Live timing using Playwright scraper from formula-timer.com"""
-    if update.effective_user:
-        logger.info(f"User {update.effective_user.id} requested live timing")
-    else:
-        logger.info("User requested live timing (unknown user)")
-    if isinstance(update.message, Message):
-        # First check if there's an active F1 session
-        if not check_active_f1_session():
-            await update.message.reply_text(
-                "❌ *Hal-hazırda aktiv F1 sessiyası yoxdur*\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.\n\n📊 Canlı vaxt göstərir:\n• Sürücülərin mövqeləri\n• Interval vaxtları\n• Ən yaxşı dövrə vaxtları\n• Təkər məlumatları\n• Hər çağırışda yenilənən məlumatlar\n\nAlternativlər:\n• /nextrace - Gələn yarış və hava proqnozu\n• /lastrace - Son sessiya nəticələri",
-                parse_mode="Markdown"
-            )
-            return
+async def live_update_task(context: ContextTypes.DEFAULT_TYPE):
+    """Background task to update live timing message"""
+    job = context.job
+    chat_id = job.data.get("chat_id")
+    message_id = job.data.get("message_id")
+    counter = job.data.get("counter", 0)
+    
+    # Imports
+    try:
+        from f1_playwright_scraper import get_optimized_live_timing, format_timing_data_for_telegram
+    except ImportError:
+        logger.error("Playwright scraper not available")
+        job.schedule_removal()
+        return
 
-        loading_msg = await update.message.reply_text(
-            "🔴 Canlı vaxt məlumatları yüklənir...\n\n⏳ Formula-timer.com saytından məlumatlar alınır..."
-        )
+    # Check active session (optional, but good practice)
+    # if not check_active_f1_session():
+    #    await context.bot.send_message(chat_id, "🔴 Sessiya başa çatdı. Canlı yayım dayandırılır.")
+    #    job.schedule_removal()
+    #    return
 
-        try:
-            # Import the Playwright scraper
-            from f1_playwright_scraper import get_optimized_live_timing, format_timing_data_for_telegram
-
-            # Get live timing data using Playwright
-            live_data = await get_optimized_live_timing()
-
-            if not live_data:
-                # Send new message instead of editing
-                await update.message.reply_text(
-                    "❌ Canlı vaxt məlumatları mövcud deyil\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.\n\n📊 Canlı vaxt göstərir:\n• Sürücülərin mövqeləri\n• Interval vaxtları\n• Ən yaxşı dövrə vaxtları\n• Təkər məlumatları\n• Hər çağırışda yenilənən məlumatlar\n\nAlternativlər:\n• /nextrace - Gələn yarış və hava proqnozu\n• /lastrace - Son sessiya nəticələri\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium",
-                    parse_mode="Markdown"
-                )
-                return
-
-            # Format the data for Telegram
+    try:
+        live_data = await get_optimized_live_timing()
+        if live_data:
             live_message = format_timing_data_for_telegram(live_data)
-
-            # Add a refresh button for users
-            keyboard = [
-                [InlineKeyboardButton(TRANSLATIONS["live_refresh_button"], callback_data="live_refresh")],
-                [InlineKeyboardButton("🏠 Ana Menyuya Qayıt", callback_data="back_to_menu")]
-            ]
+            
+            # Regeneration logic: Every 10 minutes
+            # Interval = 3s. 10 mins = 600s. 600 / 3 = 200 updates.
+            REGEN_INTERVAL = 200 
+            
+            keyboard = [[InlineKeyboardButton("🛑 Dayandır", callback_data="stop_live")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # Send new message instead of editing
-            await update.message.reply_text(
-                live_message,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
+            if counter >= REGEN_INTERVAL:
+                # Delete old message and send new one
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+                except Exception:
+                    pass # Message might already be gone
+                
+                new_msg = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=live_message,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+                
+                # Update job data with new message ID and reset counter
+                job.data["message_id"] = new_msg.message_id
+                job.data["counter"] = 0
+            else:
+                # Just edit the existing message
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=live_message,
+                        parse_mode="Markdown",
+                        reply_markup=reply_markup
+                    )
+                    job.data["counter"] = counter + 1
+                except Exception as e:
+                    if "Message is not modified" in str(e):
+                        pass # Ignore standard Telegram warning
+                    elif "Message to edit not found" in str(e):
+                        # Message deleted by user? Send new one
+                        new_msg = await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=live_message,
+                            parse_mode="Markdown",
+                            reply_markup=reply_markup
+                        )
+                        job.data["message_id"] = new_msg.message_id
+                        job.data["counter"] = 0
+                    else:
+                        logger.warning(f"Error editing live message: {e}")
 
-        except Exception as e:
-            logger.error(f"Error in live_cmd: {e}")
-            # Send new message instead of editing
-            await update.message.reply_text(
-                f"❌ Xəta: {str(e)}\n\nℹ️ Playwright quraşdırmaq üçün: pip install playwright && playwright install chromium",
+    except Exception as e:
+        logger.error(f"Error in live_update_task: {e}")
+
+
+async def live_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Live timing with auto-refresh via JobQueue"""
+    if isinstance(update.message, Message):
+        chat_id = update.message.chat_id
+        
+        # Check active session
+        if not check_active_f1_session():
+             await update.message.reply_text(
+                "❌ *Hal-hazırda aktiv F1 sessiyası yoxdur*\n\n🔴 Canlı vaxt yalnız F1 yarış həftəsonlarında mövcuddur.",
                 parse_mode="Markdown"
             )
+             return
+
+        # Stop any existing jobs for this chat
+        current_jobs = context.job_queue.get_jobs_by_name(f"live_timing_{chat_id}")
+        for job in current_jobs:
+            job.schedule_removal()
+
+        loading_msg = await update.message.reply_text(
+            "🔴 Canlı vaxt başladılır...\nMəlumatlar avtomatik yenilənəcək 🔄"
+        )
+
+        # Schedule the update job
+        context.job_queue.run_repeating(
+            live_update_task,
+            interval=3, # Update every 3 seconds for near real-time
+            first=1,
+            data={
+                "chat_id": chat_id,
+                "message_id": loading_msg.message_id,
+                "counter": 0
+            },
+            name=f"live_timing_{chat_id}"
+        )
 
 
 

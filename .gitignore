@@ -1,4 +1,9 @@
-# F1 Telegram Bot
+# Environment and secrets
+.env
+*.env
+.env.*
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,7 +25,7 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 ENV/
@@ -33,25 +38,17 @@ ENV/
 *.swo
 *~
 
-# Environment variables (exclude actual tokens)
-.env
-.env.local
-
-# Cache
-*.cache
-.f1_cache/
-f1_cache/
-f1_cache_test/
+# Logs
+*.log
+nohup.out
 
 # OS
 .DS_Store
 Thumbs.db
-*.log
 
-# Temporary files
-*.tmp
-*.temp
+# Playwright
+.playwright/
 
-# Platform specific
-.vercel/
-.leapcell/
+# Test files
+test_*.py
+debug_*.py

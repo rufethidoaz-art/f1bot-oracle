@@ -1,32 +1,13 @@
-# F1 Telegram Bot - Vercel Serverless Version
-# Optimized for Vercel serverless deployment with live timing
+# F1 Telegram Bot
+# Core dependencies
 
-# Core Bot Framework
-python-telegram-bot==20.7
-
-# HTTP Requests
+python-telegram-bot[job-queue]==20.7
 requests==2.32.3
-urllib3==2.0.7
-
-# Environment Management
 python-dotenv==1.0.1
-
-# Web Scraping (CRITICAL FOR LIVE TIMING)
-playwright==1.40.0
-beautifulsoup4==4.12.2
-lxml==4.9.3
-
-# Date/Time Handling
+playwright==1.41.0
+beautifulsoup4==4.12.3
+lxml==5.1.0
 python-dateutil==2.8.2
-
-# JSON Processing
-orjson==3.9.10
-
-# HTTP Client for Telegram
+orjson==3.9.12
 httpx==0.25.2
-
-# Logging
-structlog==23.2.0
-
-# Vercel specific - no Flask/gunicorn needed for serverless
-# The bot runs as serverless functions
+structlog==24.1.0

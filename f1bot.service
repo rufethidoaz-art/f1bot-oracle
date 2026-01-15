@@ -1,0 +1,16 @@
+[Unit]
+Description=F1 Telegram Bot
+After=network.target
+
+[Service]
+User=opc
+WorkingDirectory=/home/opc/f1bot2026update
+Environment=TELEGRAM_BOT_TOKEN=8460437666:AAHq-XBtLs40zv7YDiA8RH2yUkAEKqNmhmE
+Environment=WEBHOOK_URL=https://f1bot.duckdns.org
+Environment=PORT=8443
+ExecStart=/usr/bin/python3 run_webhook.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

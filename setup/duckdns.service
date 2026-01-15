@@ -1,0 +1,9 @@
+[Unit]
+Description=DuckDNS IP Updater
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/curl -s "https://www.duckdns.org/update?domains=f1bot&token=a4fa188c-302b-42f6-8036-3ee6ff984f6a&ip="
+
+[Install]
+WantedBy=multi-user.target
